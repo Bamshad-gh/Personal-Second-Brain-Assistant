@@ -1,0 +1,12 @@
+asgiref
+Django
+django-cors-headers
+django-environ
+djangorestframework
+djangorestframework_simplejwt
+pillow
+psycopg2-binary
+PyJWT
+sqlparse
+tzdata
+django-filter
