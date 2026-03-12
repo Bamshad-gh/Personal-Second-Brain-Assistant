@@ -79,6 +79,7 @@ class User(AbstractBaseUser, PermissionsMixin):
 
     # Audit field
     created_at = models.DateTimeField(auto_now_add=True)
+    last_login = models.DateField(blank=True,null=True)
 
     objects = UserManager()
 
