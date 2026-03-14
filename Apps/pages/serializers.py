@@ -46,11 +46,14 @@ class PageSerializer(serializers.ModelSerializer):
 class PageCreateSerializer(serializers.ModelSerializer):
     """
     Serializer for creating a new page.
+    'id' is read-only so the backend assigns it, but it IS returned in the
+    response — the frontend needs it to navigate to the newly created page.
     """
 
     class Meta:
         model = Page
-        fields = ['workspace', 'parent', 'page_type', 'title', 'icon', 'view_mode']
+        fields = ['id', 'workspace', 'parent', 'page_type', 'title', 'icon', 'view_mode']
+        read_only_fields = ['id']
 
     def validate_parent(self, value):
         """Ensure parent belongs to the same workspace."""

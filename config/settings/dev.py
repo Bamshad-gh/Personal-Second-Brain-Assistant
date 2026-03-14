@@ -24,6 +24,11 @@ CORS_ALLOWED_ORIGINS = [
     'http://localhost:5173',
 ]
 
+# CRITICAL: allows the browser to send cookies (refresh token) with cross-origin
+# requests. Required because Axios uses withCredentials: true.
+# Without this, the browser blocks every API response → "Network Error".
+CORS_ALLOW_CREDENTIALS = True
+
 # Django Debug Toolbar (optional — pip install django-debug-toolbar)
 # INSTALLED_APPS += ['debug_toolbar']
 # MIDDLEWARE    += ['debug_toolbar.middleware.DebugToolbarMiddleware']

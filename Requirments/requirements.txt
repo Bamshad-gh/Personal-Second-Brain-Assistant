@@ -1,3 +1,5 @@
+anthropic
+openai
 asgiref
 Django
 django-cors-headers
@@ -10,3 +12,5 @@ PyJWT
 sqlparse
 tzdata
 django-filter
+python-decouple
+social-auth-app-django

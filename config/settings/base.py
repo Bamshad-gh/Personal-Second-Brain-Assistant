@@ -114,10 +114,44 @@ REST_FRAMEWORK = {
     'PAGE_SIZE': 20,
 }
 
-# API keys (optional — blank if not used)
-# OPENAI_API_KEY     = env('OPENAI_API_KEY',     default='')
-# GOOGLE_CLIENT_ID   = env('GOOGLE_CLIENT_ID',   default='')
-# GOOGLE_CLIENT_SECRET = env('GOOGLE_CLIENT_SECRET', default='')
+# ── AI provider configuration ────────────────────────────────────────────────
+#
+# HOW TO ADD / SWITCH AI PROVIDERS
+# ─────────────────────────────────
+# 1. Set AI_PROVIDER to 'anthropic' or 'openai' in your .env file
+# 2. Add the corresponding API key to .env
+# 3. To add a brand-new provider: see Apps/ai_agent/services.py → PROVIDERS dict
+#
+# WHERE TO FIND THINGS:
+#   Provider classes:   Apps/ai_agent/services.py
+#   API endpoints:      Apps/ai_agent/views.py + urls.py (registered as /api/ai/)
+#   Action list:        Apps/ai_agent/services.py → SYSTEM_PROMPTS
+#   Frontend panel:     src/components/ai/AiPanel.tsx → QUICK_ACTIONS
+#   Frontend API call:  src/lib/api.ts → aiApi
+
+AI_PROVIDER = config('AI_PROVIDER', default='anthropic')  # 'anthropic' | 'openai'
+
+# API keys — set these in your .env file, never hardcode them here
+ANTHROPIC_API_KEY = config('ANTHROPIC_API_KEY', default='')
+OPENAI_API_KEY    = config('OPENAI_API_KEY',    default='')
+
+# Model IDs per provider.
+# To change the model: update the value here and restart the backend.
+# 'default' = used for most actions (more capable)
+# 'fast'    = used for quick/simple actions (cheaper, faster)
+AI_MODELS = {
+    'anthropic': {
+        'default': 'claude-sonnet-4-6',          # Claude Sonnet 4.6
+        'fast':    'claude-haiku-4-5-20251001',   # Claude Haiku 4.5
+    },
+    'openai': {
+        'default': 'gpt-4o',
+        'fast':    'gpt-4o-mini',
+    },
+}
+
+# Max tokens the AI can return in a single response
+AI_MAX_TOKENS = 2048
 
 # Google credentials (from console.cloud.google.com → Credentials → OAuth 2.0)
 # SOCIAL_AUTH_GOOGLE_OAUTH2_KEY    = config('GOOGLE_CLIENT_ID')

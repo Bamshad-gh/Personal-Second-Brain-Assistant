@@ -23,6 +23,9 @@ urlpatterns = [
 
     # Block endpoints
     path('api/blocks/', include('Apps.blocks.urls')),
+
+    # AI endpoints (action + chat)
+    path('api/ai/', include('Apps.ai_agent.urls')),
 ]
 
 # Serve media files in development

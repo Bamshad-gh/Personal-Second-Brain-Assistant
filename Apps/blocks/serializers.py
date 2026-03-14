@@ -40,12 +40,15 @@ class BlockSerializer(serializers.ModelSerializer):
 class BlockCreateSerializer(serializers.ModelSerializer):
     """
     Serializer for creating a new block.
+    'id' is read-only but IS returned in the response — the frontend needs
+    it to update the block later (useUpdateBlock uses the id for PATCH calls).
     """
 
     class Meta:
         model = Block
-        fields = ['page', 'parent', 'block_type', 'content', 'order',
+        fields = ['id', 'page', 'parent', 'block_type', 'content', 'order',
                   'canvas_x', 'canvas_y', 'canvas_w', 'canvas_h', 'canvas_z']
+        read_only_fields = ['id']
 
     def validate_parent(self, value):
         """Ensure parent belongs to the same page."""

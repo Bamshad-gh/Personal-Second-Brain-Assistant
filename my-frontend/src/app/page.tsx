@@ -1,65 +1,41 @@
-import Image from "next/image";
+/**
+ * app/page.tsx — Root Page (/)
+ *
+ * What:    The entry point of the app. Its only job is to redirect users
+ *          to the right place based on their session state.
+ *
+ * This is a Server Component (no 'use client') so it can read cookies
+ * directly and redirect before anything is sent to the browser.
+ *
+ * Redirect logic:
+ *   Has session cookie → /workspace  (app shell, Step 3 will handle sub-redirect)
+ *   No session         → /login
+ *
+ * Next.js redirect() — throws a special error that Next.js catches and
+ *   converts into an HTTP 307 redirect. It stops execution immediately,
+ *   so nothing below a redirect() call ever runs.
+ *
+ * How to expand:
+ *   Step 3 will replace '/workspace' with the user's actual last-visited
+ *   workspace ID, stored in a cookie after each visit.
+ */
 
-export default function Home() {
-  return (
-    <div className="flex min-h-screen items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex min-h-screen w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
-        </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
-        </div>
-      </main>
-    </div>
-  );
+import { redirect } from 'next/navigation';
+import { cookies } from 'next/headers';
+
+const SESSION_FLAG_COOKIE = 'has_session';
+
+export default async function RootPage() {
+  // Read cookies on the server — available in Server Components via next/headers
+  const cookieStore = await cookies();
+  const hasSession = cookieStore.get(SESSION_FLAG_COOKIE)?.value === 'true';
+
+  if (hasSession) {
+    // User is logged in — send to the app shell
+    // Step 3 will enhance this to redirect to the last active workspace
+    redirect('/workspace');
+  }
+
+  // No session — send to login
+  redirect('/login');
 }
