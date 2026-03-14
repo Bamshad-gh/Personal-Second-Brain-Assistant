@@ -3,6 +3,7 @@ from rest_framework.generics import RetrieveUpdateAPIView
 from rest_framework.response import Response
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework_simplejwt.tokens import RefreshToken
+from django.contrib.auth import authenticate
 
 from .serializers import RegisterSerializer, UserSerializer, UpdateProfileSerializer
 import re
@@ -130,3 +131,47 @@ class ChangePasswordView(APIView):
         return Response(
             {"message": "Password updated. Please log in again."}
         )
+
+
+class LoginView(APIView):
+    """
+    POST /api/auth/login/
+
+    Authenticates a user with email and password,
+    returns JWT tokens for subsequent API calls.
+    """
+
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        email = request.data.get('email', '')
+        password = request.data.get('password', '')
+
+        if not email or not password:
+            return Response(
+                {"error": "Email and password are required."},
+                status=400,
+            )
+
+        # Authenticate using email as the username field
+        user = authenticate(request, username=email, password=password)
+
+        if user is None:
+            return Response(
+                {"error": "Invalid email or password."},
+                status=401,
+            )
+
+        if not user.is_active:
+            return Response(
+                {"error": "This account is deactivated."},
+                status=403,
+            )
+
+        # Generate JWT tokens
+        tokens = get_tokens_for_user(user)
+
+        return Response({
+            "user": UserSerializer(user).data,
+            **tokens,
+        })

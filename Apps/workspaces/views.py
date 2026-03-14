@@ -1,3 +1,148 @@
-from django.shortcuts import render
+
 
 # Create your views here.
+# Apps/workspaces/views.py
+from rest_framework import status, generics
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from rest_framework.permissions import IsAuthenticated, AllowAny
+from django.shortcuts import get_object_or_404
+from django.db import transaction
+
+from .models import Workspace
+from .serializers import (
+    WorkspaceSerializer,
+    WorkspaceCreateSerializer,
+    WorkspaceUpdateSerializer,
+    WorkspaceListSerializer,
+)
+from Apps.pages.serializers import PageTreeSerializer
+from Apps.pages.models import Page
+from Apps.blocks.models import Block
+
+
+class WorkspaceListCreateView(generics.ListCreateAPIView):
+    """
+    GET  /api/workspaces/     → List all workspaces for current user
+    POST /api/workspaces/     → Create a new workspace
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def get_serializer_class(self):
+        if self.request.method == 'POST':
+            return WorkspaceCreateSerializer
+        return WorkspaceListSerializer
+
+    def get_queryset(self):
+        """Return only non-deleted workspaces owned by the current user."""
+        return Workspace.objects.filter(
+            owner=self.request.user,
+            is_deleted=False
+        ).order_by('-updated_at')
+
+    def perform_create(self, serializer):
+        """Set owner to current user when creating."""
+        serializer.save(owner=self.request.user)
+
+
+class WorkspaceDetailView(generics.RetrieveUpdateDestroyAPIView):
+    """
+    GET    /api/workspaces/{id}/  → Get workspace details
+    PATCH  /api/workspaces/{id}/  → Update workspace
+    DELETE /api/workspaces/{id}/  → Soft delete workspace
+    """
+
+    permission_classes = [IsAuthenticated]
+    serializer_class = WorkspaceSerializer
+
+    def get_queryset(self):
+        """Users can only access their own workspaces."""
+        return Workspace.objects.filter(
+            owner=self.request.user,
+            is_deleted=False
+        )
+
+    def perform_destroy(self, instance):
+        """Soft delete instead of hard delete."""
+        instance.is_deleted = True
+        instance.save(update_fields=['is_deleted'])
+
+    def update(self, request, *args, **kwargs):
+        """Use WorkspaceUpdateSerializer for updates."""
+        partial = kwargs.pop('partial', False)
+        instance = self.get_object()
+        serializer = WorkspaceUpdateSerializer(
+            instance,
+            data=request.data,
+            partial=partial
+        )
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(WorkspaceSerializer(instance).data)
+
+
+class WorkspacePagesView(APIView):
+    """
+    GET /api/workspaces/{id}/pages/  → Get all pages in a workspace
+    Returns hierarchical page tree for sidebar.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, pk):
+        workspace = get_object_or_404(
+            Workspace,
+            pk=pk,
+            owner=request.user,
+            is_deleted=False
+        )
+
+        # Get all pages in workspace (excluding deleted)
+        pages = workspace.pages.filter(
+            is_deleted=False
+        ).select_related('parent', 'created_by').order_by('title')
+
+        # Build hierarchical structure
+        
+
+        # Get root pages (no parent)
+        root_pages = pages.filter(parent__isnull=True)
+
+        serializer = PageTreeSerializer(root_pages, many=True, context={'all_pages': pages})
+        return Response(serializer.data)
+
+
+class WorkspaceStatsView(APIView):
+    """
+    GET /api/workspaces/{id}/stats/  → Get workspace statistics
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, pk):
+        workspace = get_object_or_404(
+            Workspace,
+            pk=pk,
+            owner=request.user,
+            is_deleted=False
+        )
+
+
+
+        total_pages = Page.objects.filter(
+            workspace=workspace,
+            is_deleted=False
+        ).count()
+
+        total_blocks = Block.objects.filter(
+            page__workspace=workspace,
+            is_deleted=False
+        ).count()
+
+        return Response({
+            'workspace_id': str(workspace.id),
+            'total_pages': total_pages,
+            'total_blocks': total_blocks,
+            'storage_used_mb': float(workspace.storage_used_mb),
+        })
