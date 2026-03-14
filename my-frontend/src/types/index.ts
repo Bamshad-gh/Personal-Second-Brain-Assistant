@@ -173,45 +173,63 @@ export interface User {
  * A workspace is a top-level container, like a company or personal vault.
  * One user can have multiple workspaces.
  *
+ * FIELD AVAILABILITY NOTE:
+ *   GET /api/workspaces/      (list)   → returns: id, name, icon, color, page_count, is_locked, updated_at
+ *   GET /api/workspaces/{id}/ (detail) → returns all fields below
+ *   Fields marked ? are only present on the detail endpoint.
+ *
  * To add workspace settings later: extend this interface and add
  * the field to the PATCH /api/workspaces/:id/ endpoint.
  */
 export interface Workspace {
   id: string;
   name: string;
-  icon: string;           // emoji, e.g. '🧠'
-  color: string;          // hex color for sidebar accent
-  description: string;
-  is_personal: boolean;   // true = the user's private default workspace
-  enc_tier: EncTier;
-  ai_consent: AiConsent;
-  storage_used_mb: number;
-  created_at: string;     // ISO 8601 date string
+  icon: string;               // emoji, e.g. '🧠'
+  color: string;              // backend string name: 'white'|'red'|'green'|'yellow'|'blue'|'purple'
   updated_at: string;
+  // Detail-only fields (not returned by the list endpoint)
+  description?: string;
+  is_personal?: boolean;      // true = the user's private default workspace
+  enc_tier?: EncTier;
+  ai_consent?: AiConsent;
+  storage_used_mb?: number;
+  created_at?: string;        // ISO 8601 date string
+  // Computed fields returned by both list and detail
+  page_count?: number;
+  is_locked?: boolean;
+  owner_name?: string;        // display_name of the owner (detail only)
 }
 
 /**
  * Page — mirrors pages.Page model
  * A page lives inside a workspace and contains blocks.
  * Pages can be nested (parent → children) for sidebar hierarchy.
+ *
+ * FIELD AVAILABILITY NOTE:
+ *   GET /api/pages/?workspace=<id>  (list)   → returns: id, title, icon, page_type, parent, is_pinned, is_locked, updated_at
+ *   GET /api/pages/{id}/            (detail) → returns all fields below
+ *   POST/PATCH /api/pages/          (write)  → returns all fields below
+ *   Fields marked ? may be absent when reading from the list endpoint.
+ *
+ * NOTE: is_deleted is never returned by the API (backend filters deleted pages out).
  */
 export interface Page {
   id: string;
-  workspace: string;      // workspace UUID
-  created_by: string;     // user UUID
-  parent: string | null;  // parent page UUID, or null if top-level
-  page_type: PageType;
-  view_mode: ViewMode;
   title: string;
   icon: string;
-  header_pic: string | null;
+  page_type: PageType;
+  parent: string | null;  // parent page UUID, or null if top-level
   is_pinned: boolean;
-  is_deleted: boolean;
-  enc_tier: EncTier;
-  ai_consent: AiConsent;
   is_locked: boolean;
-  created_at: string;
   updated_at: string;
+  // Detail-only / write-response fields:
+  workspace?: string;      // workspace UUID
+  created_by?: string;     // user UUID
+  view_mode?: ViewMode;
+  header_pic?: string | null;
+  enc_tier?: EncTier;
+  ai_consent?: AiConsent;
+  created_at?: string;
 }
 
 /**
@@ -309,14 +327,16 @@ export interface CreatePagePayload {
   icon?: string;
 }
 
+// BUG FIX: removed enc_tier and ai_consent (not in PageUpdateSerializer).
+// Added page_type and view_mode (which PageUpdateSerializer does accept).
 export interface UpdatePagePayload {
   title?: string;
   icon?: string;
   header_pic?: string | null;
   is_pinned?: boolean;
   parent?: string | null;
-  enc_tier?: EncTier;
-  ai_consent?: AiConsent;
+  page_type?: PageType;
+  view_mode?: ViewMode;
 }
 
 export interface CreateBlockPayload {
@@ -326,10 +346,11 @@ export interface CreateBlockPayload {
   parent?: string | null;
 }
 
+// BUG FIX: removed block_type (BlockUpdateSerializer does not accept it).
 export interface UpdateBlockPayload {
   content?: Record<string, unknown>;
   order?: number;
-  block_type?: BlockType;
+  parent?: string | null;
 }
 
 export interface ReorderBlocksPayload {
@@ -354,6 +375,22 @@ export interface AiChatPayload {
   messages: AiChatMessage[];
   page_id?:  string;   // page to use as context (optional)
   context?:  string;   // extra context text (optional)
+}
+
+/** Response from GET /api/ai/usage/ — token usage summary for the current user */
+export interface AiUsageSummary {
+  total_input_tokens:  number;
+  total_output_tokens: number;
+  calls_today:         number;
+  calls_this_month:    number;
+  recent: Array<{
+    call_type:     string;
+    action_name:   string;
+    model:         string;
+    input_tokens:  number;
+    output_tokens: number;
+    created_at:    string;
+  }>;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

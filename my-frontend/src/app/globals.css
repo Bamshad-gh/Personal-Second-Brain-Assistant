@@ -286,3 +286,62 @@ body {
   text-decoration: underline;
   text-underline-offset: 3px;
 }
+
+/* Highlight mark */
+.tiptap-editor .ProseMirror mark {
+  border-radius: 3px;
+  padding: 0 2px;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   THEME — dark (default) and light CSS variable overrides
+   The app uses Tailwind classes (bg-neutral-950 etc.) as the dark theme.
+   Light mode overrides are applied by adding class="light" to <html>.
+   ══════════════════════════════════════════════════════════════════════════ */
+
+/* Dark theme — variables match the existing Tailwind color palette */
+:root,
+.dark {
+  --app-bg:      #0a0a0a;
+  --surface:     #171717;
+  --border:      #262626;
+  --text:        #f5f5f5;
+  --text-muted:  #a3a3a3;
+}
+
+/* Light theme — applied when next-themes sets class="light" on <html> */
+.light {
+  --app-bg:      #fafafa;
+  --surface:     #ffffff;
+  --border:      #e5e5e5;
+  --text:        #0a0a0a;
+  --text-muted:  #525252;
+}
+
+/* Apply light-mode structural overrides */
+.light body {
+  background-color: var(--app-bg);
+  color: var(--text);
+}
+
+.light .bg-neutral-950  { background-color: #f5f5f5; }
+.light .bg-neutral-900  { background-color: #ffffff; }
+.light .bg-neutral-800  { background-color: #e5e5e5; }
+.light .border-neutral-800 { border-color: #d4d4d4; }
+.light .text-neutral-100 { color: #0a0a0a; }
+.light .text-neutral-200 { color: #171717; }
+.light .text-neutral-300 { color: #262626; }
+.light .text-neutral-400 { color: #525252; }
+.light .text-neutral-500 { color: #737373; }
+.light .text-neutral-600 { color: #a3a3a3; }
+
+/* Light mode TipTap text */
+.light .tiptap-editor .ProseMirror h1,
+.light .tiptap-editor .ProseMirror h2,
+.light .tiptap-editor .ProseMirror h3 { color: #0a0a0a; }
+.light .tiptap-editor .ProseMirror p  { color: #262626; }
+.light .tiptap-editor .ProseMirror ul,
+.light .tiptap-editor .ProseMirror ol { color: #262626; }
+
+/* Sidebar item transition */
+.sidebar-item { transition: background 120ms ease, color 120ms ease; }

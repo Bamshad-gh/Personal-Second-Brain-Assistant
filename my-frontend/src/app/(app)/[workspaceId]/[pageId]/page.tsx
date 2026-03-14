@@ -27,6 +27,7 @@ import { useBlocks, useCreateBlock, useUpdateBlock } from '@/hooks/useBlocks';
 import { useUpdatePage } from '@/hooks/usePages';
 import { useAppStore } from '@/lib/store';
 import { Editor } from '@/components/editor/Editor';
+import { EditorErrorBoundary } from '@/components/editor/EditorErrorBoundary';
 import { AiPanel } from '@/components/ai/AiPanel';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -210,13 +211,15 @@ export default function PageEditorRoute() {
             />
           </div>
 
-          {/* TipTap editor */}
-          <Editor
-            initialContent={initialContent}
-            onSave={handleSave}
-            onTextChange={setEditorText}
-            readOnly={page.is_locked}
-          />
+          {/* TipTap editor — wrapped in error boundary to prevent blank screen on crash */}
+          <EditorErrorBoundary>
+            <Editor
+              initialContent={initialContent}
+              onSave={handleSave}
+              onTextChange={setEditorText}
+              readOnly={page.is_locked}
+            />
+          </EditorErrorBoundary>
         </div>
       </div>
 

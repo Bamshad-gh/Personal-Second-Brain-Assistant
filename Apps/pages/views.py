@@ -23,11 +23,17 @@ from Apps.workspaces.models import Workspace
 
 class PageListCreateView(generics.ListCreateAPIView):
     """
-    GET  /api/pages/     → List all pages for current user
-    POST /api/pages/     → Create a new page
+    GET  /api/pages/               → List all pages for current user
+    GET  /api/pages/?workspace=<id> → List pages in a specific workspace (for sidebar)
+    POST /api/pages/               → Create a new page
     """
 
     permission_classes = [IsAuthenticated]
+
+    # BUG FIX: Disable pagination so ?workspace=<uuid> works as a plain filter.
+    # Without this, DRF's PageNumberPagination would wrap the response in
+    # {count, results, next, previous} — the frontend expects a flat array.
+    pagination_class = None
 
     def get_serializer_class(self):
         if self.request.method == 'POST':
@@ -51,6 +57,21 @@ class PageListCreateView(generics.ListCreateAPIView):
     def perform_create(self, serializer):
         """Set created_by to current user."""
         serializer.save(created_by=self.request.user)
+
+    def create(self, request, *args, **kwargs):
+        """
+        Override to return the full PageSerializer response after create.
+        BUG FIX: DRF's default create() returns PageCreateSerializer data,
+        which is missing many fields (created_by, is_pinned, enc_tier, etc.).
+        The frontend needs the full page object to update its cache correctly.
+        """
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        self.perform_create(serializer)
+        return Response(
+            PageSerializer(serializer.instance).data,
+            status=status.HTTP_201_CREATED,
+        )
 
 
 class PageDetailView(generics.RetrieveUpdateDestroyAPIView):

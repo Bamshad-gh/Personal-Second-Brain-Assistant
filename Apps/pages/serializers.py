@@ -119,6 +119,9 @@ class PageTreeSerializer(serializers.ModelSerializer):
 class PageListSerializer(serializers.ModelSerializer):
     """
     Minimal serializer for listing pages.
+    Used by GET /api/pages/?workspace=<id> (sidebar page list).
+    'parent' is included so the frontend flat-to-tree algorithm can rebuild
+    the hierarchy from the flat list.
     """
 
     class Meta:
@@ -128,6 +131,7 @@ class PageListSerializer(serializers.ModelSerializer):
             'title',
             'icon',
             'page_type',
+            'parent',
             'is_pinned',
             'is_locked',
             'updated_at',

@@ -30,21 +30,18 @@ export const pageKeys = {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * usePages — fetches all pages in a workspace.
- * Returns them flat from the API; the PageTree component builds the hierarchy
- * client-side using the parent field.
+ * usePages — fetches all pages in a workspace as a flat array.
+ * The PageTree component builds the hierarchy client-side using the 'parent' field.
+ *
+ * Endpoint: GET /api/pages/?workspace=<id>  (PageListSerializer — flat, includes parent)
+ * pageApi.list() handles pagination internally and always returns Page[].
  */
 export function usePages(workspaceId: string | null) {
   return useQuery({
     queryKey: pageKeys.all(workspaceId ?? ''),
     queryFn: () => pageApi.list(workspaceId!),
     enabled: !!workspaceId,
-    // The workspace pages endpoint returns a FLAT array (PageTreeSerializer),
-    // not the paginated {count, results} shape. This guard handles both shapes
-    // so a future pagination change won't break the sidebar.
-    select: (data: Page[] | { results: Page[] }) =>
-      Array.isArray(data) ? data : (data.results ?? []),
-    staleTime: 1000 * 60 * 2, // pages change more often, 2 min stale time
+    staleTime: 1000 * 60 * 2, // 2 min stale time — pages change frequently
   });
 }
 

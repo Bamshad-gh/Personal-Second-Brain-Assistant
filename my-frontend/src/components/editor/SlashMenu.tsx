@@ -25,7 +25,7 @@ import type { Editor } from '@tiptap/react';
 import {
   Type, Heading1, Heading2, Heading3,
   Code, Quote, CheckSquare, Minus,
-  List, ListOrdered,
+  List, ListOrdered, ChevronRight,
 } from 'lucide-react';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -111,6 +111,18 @@ const COMMANDS: SlashCommand[] = [
     description: 'Horizontal rule',
     icon: <Minus size={16} />,
     execute: (editor) => editor.chain().focus().setHorizontalRule().run(),
+  },
+  {
+    id: 'toggle',
+    label: 'Toggle',
+    description: 'Collapsible section',
+    icon: <ChevronRight size={16} />,
+    execute: (editor) =>
+      editor.chain().focus().insertContent({
+        type: 'toggleBlock',
+        attrs: { open: true },
+        content: [{ type: 'paragraph' }],
+      }).run(),
   },
 ];
 

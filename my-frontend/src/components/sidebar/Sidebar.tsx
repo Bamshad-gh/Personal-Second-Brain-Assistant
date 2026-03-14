@@ -20,15 +20,17 @@
 
 import { useEffect } from 'react';
 import { usePathname } from 'next/navigation';
-import { Plus, LogOut, Settings } from 'lucide-react';
+import { Plus, LogOut, Settings, PanelLeftClose } from 'lucide-react';
 import toast from 'react-hot-toast';
+import { useQuery } from '@tanstack/react-query';
 import { useAppStore } from '@/lib/store';
 import { useWorkspaces, useWorkspace } from '@/hooks/useWorkspace';
 import { usePages } from '@/hooks/usePages';
 import { useCreatePage, useDeletePage } from '@/hooks/usePages';
-import { authApi } from '@/lib/api';
+import { authApi, aiApi } from '@/lib/api';
 import { WorkspaceSwitcher } from './WorkspaceSwitcher';
 import { PageTree } from './PageTree';
+import { ThemeToggle } from '@/components/ui/ThemeToggle';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -47,7 +49,7 @@ export function Sidebar({ workspaceId, activePageId }: SidebarProps) {
   const pathname = usePathname();
 
   // ── Global state ──────────────────────────────────────────────────────────
-  const { user, logout, activeWorkspace, setActiveWorkspace, sidebarOpen, setSidebarOpen } =
+  const { user, logout, activeWorkspace, setActiveWorkspace, sidebarOpen, setSidebarOpen, toggleSidebarCollapse } =
     useAppStore((state) => ({
       user: state.user,
       logout: state.logout,
@@ -55,6 +57,7 @@ export function Sidebar({ workspaceId, activePageId }: SidebarProps) {
       setActiveWorkspace: state.setActiveWorkspace,
       sidebarOpen: state.sidebarOpen,
       setSidebarOpen: state.setSidebarOpen,
+      toggleSidebarCollapse: state.toggleSidebarCollapse,
     }));
 
   // ── Data ──────────────────────────────────────────────────────────────────
@@ -63,6 +66,11 @@ export function Sidebar({ workspaceId, activePageId }: SidebarProps) {
   const { data: pages = [], isLoading: pagesLoading } = usePages(workspaceId);
   const createPage = useCreatePage(workspaceId);
   const deletePage = useDeletePage(workspaceId);
+  const { data: aiUsage } = useQuery({
+    queryKey: ['ai-usage'],
+    queryFn: () => aiApi.getUsage(),
+    staleTime: 1000 * 60 * 5, // 5 min — usage doesn't need to be real-time
+  });
 
   // Sync the workspace data into Zustand when it loads
   useEffect(() => {
@@ -142,17 +150,26 @@ export function Sidebar({ workspaceId, activePageId }: SidebarProps) {
           'md:translate-x-0', // always visible on desktop
         ].join(' ')}
       >
-        {/* ── Header: workspace switcher ─────────────────────────────────── */}
-        <div className="p-2 pt-3">
-          {displayWorkspace ? (
-            <WorkspaceSwitcher
-              activeWorkspace={displayWorkspace}
-              workspaces={workspaces}
-            />
-          ) : (
-            // Skeleton while loading
-            <div className="h-11 animate-pulse rounded-lg bg-neutral-800" />
-          )}
+        {/* ── Header: workspace switcher + collapse button ───────────────── */}
+        <div className="flex items-center gap-1 p-2 pt-3">
+          <div className="flex-1 min-w-0">
+            {displayWorkspace ? (
+              <WorkspaceSwitcher
+                activeWorkspace={displayWorkspace}
+                workspaces={workspaces}
+              />
+            ) : (
+              <div className="h-11 animate-pulse rounded-lg bg-neutral-800" />
+            )}
+          </div>
+          {/* Collapse — hides the sidebar; use the hamburger in top bar to reopen */}
+          <button
+            onClick={() => { toggleSidebarCollapse(); setSidebarOpen(false); }}
+            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-neutral-600 hover:bg-neutral-800 hover:text-neutral-300 transition-colors"
+            title="Collapse sidebar"
+          >
+            <PanelLeftClose size={14} />
+          </button>
         </div>
 
         {/* ── New page button ────────────────────────────────────────────── */}
@@ -201,7 +218,11 @@ export function Sidebar({ workspaceId, activePageId }: SidebarProps) {
               <p className="truncate text-xs font-medium text-neutral-200">
                 {user?.display_name ?? user?.full_name ?? 'You'}
               </p>
-              <p className="truncate text-xs text-neutral-500">{user?.email}</p>
+              <p className="truncate text-xs text-neutral-500">
+                {aiUsage != null
+                  ? `${aiUsage.calls_this_month} AI calls this month`
+                  : user?.email}
+              </p>
             </div>
 
             {/* Settings button — placeholder for later */}
@@ -211,6 +232,9 @@ export function Sidebar({ workspaceId, activePageId }: SidebarProps) {
             >
               <Settings size={13} />
             </button>
+
+            {/* Theme toggle — switches dark / light mode */}
+            <ThemeToggle />
 
             {/* Logout button */}
             <button

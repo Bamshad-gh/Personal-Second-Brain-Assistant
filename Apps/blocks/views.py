@@ -29,6 +29,13 @@ class BlockListCreateView(generics.ListCreateAPIView):
 
     permission_classes = [IsAuthenticated]
 
+    # BUG FIX: DRF's global DEFAULT_PAGINATION_CLASS uses ?page= as its page-number
+    # query parameter. When the frontend sends GET /api/blocks/?page=<uuid>, DRF tries
+    # to parse the UUID as a page number integer → raises InvalidPage → 404.
+    # Setting pagination_class = None disables pagination on this view so that
+    # ?page=<uuid> is passed straight through to get_queryset() as a filter param.
+    pagination_class = None
+
     def get_serializer_class(self):
         if self.request.method == 'POST':
             return BlockCreateSerializer

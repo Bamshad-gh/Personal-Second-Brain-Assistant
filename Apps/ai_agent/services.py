@@ -72,12 +72,20 @@ class AnthropicProvider:
             )
         self._client = _anthropic.Anthropic(api_key=settings.ANTHROPIC_API_KEY)
 
-    def chat(self, messages: list, model: str, system: str = '') -> str:
+    def chat(self, messages: list, model: str, system: str = '') -> dict:
+        """
+        Returns: {'text': str, 'input_tokens': int, 'output_tokens': int}
+        Token counts are from response.usage — used by views.py to log AiUsageLog.
+        """
         kwargs = {'model': model, 'max_tokens': settings.AI_MAX_TOKENS, 'messages': messages}
         if system:
             kwargs['system'] = system
         response = self._client.messages.create(**kwargs)
-        return response.content[0].text
+        return {
+            'text':          response.content[0].text,
+            'input_tokens':  response.usage.input_tokens,
+            'output_tokens': response.usage.output_tokens,
+        }
 
 
 class OpenAIProvider:
@@ -97,7 +105,11 @@ class OpenAIProvider:
             )
         self._client = _openai.OpenAI(api_key=settings.OPENAI_API_KEY)
 
-    def chat(self, messages: list, model: str, system: str = '') -> str:
+    def chat(self, messages: list, model: str, system: str = '') -> dict:
+        """
+        Returns: {'text': str, 'input_tokens': int, 'output_tokens': int}
+        Token counts are from response.usage — used by views.py to log AiUsageLog.
+        """
         all_messages = []
         if system:
             all_messages.append({'role': 'system', 'content': system})
@@ -105,7 +117,11 @@ class OpenAIProvider:
         response = self._client.chat.completions.create(
             model=model, messages=all_messages, max_tokens=settings.AI_MAX_TOKENS,
         )
-        return response.choices[0].message.content
+        return {
+            'text':          response.choices[0].message.content,
+            'input_tokens':  response.usage.prompt_tokens,
+            'output_tokens': response.usage.completion_tokens,
+        }
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -178,7 +194,7 @@ ACTION_MODELS = {
 # Public functions — called by views.py
 # ─────────────────────────────────────────────────────────────────────────────
 
-def run_action(action_type: str, content: str, extra: dict | None = None) -> str:
+def run_action(action_type: str, content: str, extra: dict | None = None) -> tuple:
     """
     Run a predefined AI action on some text.
 
@@ -186,7 +202,8 @@ def run_action(action_type: str, content: str, extra: dict | None = None) -> str
     content     — the text to process
     extra       — optional params injected into the system prompt
                   (e.g. {'language': 'Spanish'} for 'translate')
-    Returns the AI's response string.
+    Returns (text, input_tokens, output_tokens) tuple.
+    Token counts are used by views.py to log AiUsageLog.
     """
     template = SYSTEM_PROMPTS.get(action_type)
     if not template:
@@ -194,24 +211,26 @@ def run_action(action_type: str, content: str, extra: dict | None = None) -> str
             f"Unknown action '{action_type}'. Valid: {list(SYSTEM_PROMPTS.keys())}"
         )
 
-    system  = template.format(**(extra or {})) if extra else template
-    model   = get_model(ACTION_MODELS.get(action_type, 'default'))
+    system   = template.format(**(extra or {})) if extra else template
+    model    = get_model(ACTION_MODELS.get(action_type, 'default'))
     provider = get_provider()
 
-    return provider.chat(
+    result = provider.chat(
         messages=[{'role': 'user', 'content': content}],
         model=model,
         system=system,
     )
+    return result['text'], result['input_tokens'], result['output_tokens']
 
 
-def run_chat(messages: list, page_context: str = '') -> str:
+def run_chat(messages: list, page_context: str = '') -> tuple:
     """
     Run a free-form chat conversation.
 
     messages     — full conversation history [{role, content}, ...]
     page_context — optional text from the current page (used as AI context)
-    Returns the AI's next reply.
+    Returns (text, input_tokens, output_tokens) tuple.
+    Token counts are used by views.py to log AiUsageLog.
     """
     system = SYSTEM_PROMPTS['ask']
     if page_context:
@@ -221,8 +240,9 @@ def run_chat(messages: list, page_context: str = '') -> str:
             f"--- PAGE CONTENT ---\n{page_context[:4000]}\n--- END ---"
         )
 
-    return get_provider().chat(
+    result = get_provider().chat(
         messages=messages,
         model=get_model('default'),
         system=system,
     )
+    return result['text'], result['input_tokens'], result['output_tokens']

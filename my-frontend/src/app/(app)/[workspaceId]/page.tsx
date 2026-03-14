@@ -79,7 +79,7 @@ export default function WorkspaceHomePage() {
 
   async function handleNewPage() {
     try {
-      const newPage = await createPage.mutateAsync({ title: '', page_type: 'note' });
+      const newPage = await createPage.mutateAsync({ title: 'Untitled', page_type: 'note' });
       router.push(`/${workspaceId}/${newPage.id}`);
     } catch {
       toast.error('Could not create page. Please try again.');

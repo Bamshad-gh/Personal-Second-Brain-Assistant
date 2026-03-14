@@ -7,21 +7,25 @@
  *   - Starter-kit (bold, italic, lists, headings, code, blockquote, hr, undo/redo)
  *   - Task list (checkbox to-dos)
  *   - Code blocks with lowlight syntax highlighting
+ *   - Highlight (multi-color), TextStyle + Color (text color)
  *   - Placeholder text
- *   - Floating bubble menu on selection: Bold / Italic / Code
+ *   - Inline toolbar: Bold / Italic / Code / H1 / H2 / H3 / List / Todo / Highlight / Color / Voice
  *   - Slash ("/") command menu for inserting block types
  *   - Autosave: calls onSave(json) 500ms after the last keystroke
  *   - Save indicator: "Saving…" / "Saved ✓" in the toolbar
+ *   - Voice-to-text via Web Speech API (no extra packages)
  *
  * Props:
  *   initialContent  — JSON content from the database (or null for a new page)
  *   onSave          — called with the editor's JSON when autosave fires
  *   readOnly        — disables editing (for locked pages)
  *
- * How to expand:
- *   - Add @tiptap/extension-link for clickable URLs
- *   - Add @tiptap/extension-image for drag-and-drop image uploads
- *   - Add @tiptap/extension-collaboration for real-time multiplayer
+ * WHERE TO FIND THINGS
+ *   Extensions list:     useEditor({ extensions: [...] }) below
+ *   Toolbar buttons:     "Inline format toolbar" section below
+ *   Voice handler:       toggleVoice() function below
+ *   Slash commands:      src/components/editor/SlashMenu.tsx → COMMANDS array
+ *   Toggle block:        src/components/editor/extensions/ToggleBlock.ts
  */
 
 'use client';
@@ -34,8 +38,15 @@ import TaskList from '@tiptap/extension-task-list';
 import TaskItem from '@tiptap/extension-task-item';
 import Typography from '@tiptap/extension-typography';
 import CodeBlockLowlight from '@tiptap/extension-code-block-lowlight';
+import Highlight from '@tiptap/extension-highlight';
+import { TextStyle } from '@tiptap/extension-text-style';
+import Color from '@tiptap/extension-color';
 import { common, createLowlight } from 'lowlight';
-import { Bold, Italic, Code, CheckCheck, Clock, List, CheckSquare } from 'lucide-react';
+import { ToggleBlock } from './extensions/ToggleBlock';
+import {
+  Bold, Italic, Code, CheckCheck, Clock,
+  List, CheckSquare, Highlighter, Palette, Mic, MicOff,
+} from 'lucide-react';
 import { SlashMenu } from './SlashMenu';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -111,8 +122,14 @@ export function Editor({ initialContent, onSave, onTextChange, readOnly = false 
   const [slashPos,   setSlashPos]   = useState({ top: 0, left: 0 });
   const editorContainerRef = useRef<HTMLDivElement>(null);
 
+  // ── Voice-to-text state ───────────────────────────────────────────────────
+  const [isRecording, setIsRecording] = useState(false);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const recognitionRef = useRef<any>(null);
+
   // ── TipTap editor ─────────────────────────────────────────────────────────
   const editor = useEditor({
+    immediatelyRender: false, // fix SSR hydration mismatch
     editable: !readOnly,
 
     extensions: [
@@ -129,6 +146,11 @@ export function Editor({ initialContent, onSave, onTextChange, readOnly = false 
       TaskItem.configure({ nested: true }),
       Typography,
       CodeBlockLowlight.configure({ lowlight }),
+      // Text formatting extensions
+      TextStyle,                               // required by Color
+      Color,                                   // text color via setColor()
+      Highlight.configure({ multicolor: true }),// background highlight
+      ToggleBlock,                               // collapsible toggle block
     ],
 
     content: initialContent ?? undefined,
@@ -197,6 +219,49 @@ export function Editor({ initialContent, onSave, onTextChange, readOnly = false 
     }
   }, [editor, initialContent]);
 
+  // ── Voice-to-text handler (Web Speech API — no extra packages) ────────────
+  // TypeScript doesn't include Web Speech API types by default, so we use
+  // a local interface cast to avoid adding a @types package.
+  function toggleVoice() {
+    if (isRecording) {
+      recognitionRef.current?.stop();
+      return;
+    }
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const win = window as any;
+    const SpeechRecognitionCtor = win.SpeechRecognition ?? win.webkitSpeechRecognition;
+
+    if (!SpeechRecognitionCtor) {
+      // Browser doesn't support Speech API (e.g. Firefox without flag)
+      alert('Voice input is not supported in this browser. Try Chrome or Edge.');
+      return;
+    }
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const r: any = new SpeechRecognitionCtor();
+    r.continuous     = true;
+    r.interimResults = false;
+    r.lang           = 'en-US';
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    r.onresult = (e: any) => {
+      const text: string = e.results[e.results.length - 1][0].transcript;
+      editor?.chain().focus().insertContent(text + ' ').run();
+    };
+    r.onerror = () => setIsRecording(false);
+    r.onend   = () => setIsRecording(false);
+
+    r.start();
+    recognitionRef.current = r;
+    setIsRecording(true);
+  }
+
+  // Stop recording if the component unmounts
+  useEffect(() => {
+    return () => { recognitionRef.current?.stop(); };
+  }, []);
+
   // ── Render ─────────────────────────────────────────────────────────────────
 
   if (!editor) return null;
@@ -220,7 +285,8 @@ export function Editor({ initialContent, onSave, onTextChange, readOnly = false 
       )}
 
       {/* ── Inline format toolbar — shown when editor is focused ─────────── */}
-      <div className="mb-3 flex items-center gap-0.5 border-b border-neutral-800/60 pb-2">
+      <div className="mb-3 flex flex-wrap items-center gap-0.5 border-b border-neutral-800/60 pb-2">
+        {/* Text style */}
         <BubbleButton
           onClick={() => editor.chain().focus().toggleBold().run()}
           isActive={editor.isActive('bold')}
@@ -242,7 +308,10 @@ export function Editor({ initialContent, onSave, onTextChange, readOnly = false 
         >
           <Code size={13} />
         </BubbleButton>
+
         <div className="mx-1 h-4 w-px bg-neutral-800" />
+
+        {/* Headings */}
         <BubbleButton
           onClick={() => editor.chain().focus().toggleHeading({ level: 1 }).run()}
           isActive={editor.isActive('heading', { level: 1 })}
@@ -258,6 +327,17 @@ export function Editor({ initialContent, onSave, onTextChange, readOnly = false 
           <span className="text-[11px] font-bold">H2</span>
         </BubbleButton>
         <BubbleButton
+          onClick={() => editor.chain().focus().toggleHeading({ level: 3 }).run()}
+          isActive={editor.isActive('heading', { level: 3 })}
+          title="Heading 3"
+        >
+          <span className="text-[11px] font-bold">H3</span>
+        </BubbleButton>
+
+        <div className="mx-1 h-4 w-px bg-neutral-800" />
+
+        {/* Lists */}
+        <BubbleButton
           onClick={() => editor.chain().focus().toggleBulletList().run()}
           isActive={editor.isActive('bulletList')}
           title="Bullet list"
@@ -270,6 +350,37 @@ export function Editor({ initialContent, onSave, onTextChange, readOnly = false 
           title="To-do list"
         >
           <CheckSquare size={13} />
+        </BubbleButton>
+
+        <div className="mx-1 h-4 w-px bg-neutral-800" />
+
+        {/* Highlight — toggles violet background on selected text */}
+        <BubbleButton
+          onClick={() => editor.chain().focus().toggleHighlight({ color: '#7c3aed33' }).run()}
+          isActive={editor.isActive('highlight')}
+          title="Highlight"
+        >
+          <Highlighter size={13} />
+        </BubbleButton>
+
+        {/* Text color — native color picker */}
+        <ColorPickerButton
+          title="Text color"
+          onChange={(color) => editor.chain().focus().setColor(color).run()}
+          onReset={() => editor.chain().focus().unsetColor().run()}
+        />
+
+        <div className="mx-1 h-4 w-px bg-neutral-800" />
+
+        {/* Voice-to-text — Web Speech API */}
+        <BubbleButton
+          onClick={toggleVoice}
+          isActive={isRecording}
+          title={isRecording ? 'Stop recording' : 'Voice to text'}
+        >
+          {isRecording
+            ? <MicOff size={13} className="text-red-400 animate-pulse" />
+            : <Mic size={13} />}
         </BubbleButton>
       </div>
 
@@ -290,7 +401,7 @@ export function Editor({ initialContent, onSave, onTextChange, readOnly = false 
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// BubbleButton — tiny toolbar button for the floating bubble menu
+// BubbleButton — tiny toolbar button
 // ─────────────────────────────────────────────────────────────────────────────
 
 function BubbleButton({
@@ -317,5 +428,43 @@ function BubbleButton({
     >
       {children}
     </button>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ColorPickerButton — Palette icon that opens a native <input type="color">
+// ─────────────────────────────────────────────────────────────────────────────
+
+function ColorPickerButton({
+  onChange,
+  onReset,
+  title,
+}: {
+  onChange: (color: string) => void;
+  onReset:  () => void;
+  title:    string;
+}) {
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  return (
+    <div className="relative">
+      <button
+        onClick={() => inputRef.current?.click()}
+        title={title}
+        className="flex h-7 w-7 items-center justify-center rounded-md text-sm text-neutral-400 transition-colors hover:bg-white/10 hover:text-neutral-200"
+        onContextMenu={(e) => { e.preventDefault(); onReset(); }}
+      >
+        <Palette size={13} />
+      </button>
+      {/* Right-click the palette button to reset color */}
+      <input
+        ref={inputRef}
+        type="color"
+        className="absolute left-0 top-0 h-0 w-0 opacity-0"
+        onChange={(e) => onChange(e.target.value)}
+        aria-hidden="true"
+        tabIndex={-1}
+      />
+    </div>
   );
 }

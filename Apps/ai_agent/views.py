@@ -2,10 +2,18 @@
 """
 AI API views.
 
-Endpoints:
+════════════════════════════════════════════════════════════════════
+ENDPOINT MAP
+════════════════════════════════════════════════════════════════════
   POST /api/ai/action/  → AiActionView  (predefined text actions)
   POST /api/ai/chat/    → AiChatView    (free-form conversation)
+  GET  /api/ai/usage/   → AiUsageView   (token usage summary for current user)
+All registered in: Apps/ai_agent/urls.py → config/urls.py
+════════════════════════════════════════════════════════════════════
 """
+
+from django.utils import timezone
+from django.db.models import Sum
 
 from rest_framework.views import APIView
 from rest_framework.response import Response
@@ -13,6 +21,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework import status
 
 from .serializers import AiActionSerializer, AiChatSerializer
+from .models import AiUsageLog
 from . import services
 
 
@@ -61,8 +70,24 @@ class AiActionView(APIView):
             )
 
         try:
-            result = services.run_action(action_type, content, extra)
-            return Response({'result': result})
+            text, input_tokens, output_tokens = services.run_action(action_type, content, extra)
+
+            # Log usage — wrapped in try/except so a logging failure never breaks AI
+            try:
+                AiUsageLog.objects.create(
+                    user=request.user,
+                    call_type='action',
+                    action_name=action_type,
+                    provider=getattr(services.get_provider(), '__class__', type('', (), {'__name__': 'unknown'})).__name__,
+                    model=services.get_model(services.ACTION_MODELS.get(action_type, 'default')),
+                    input_tokens=input_tokens,
+                    output_tokens=output_tokens,
+                )
+            except Exception:
+                pass  # Never let logging break the AI response
+
+            return Response({'result': text})
+
         except (ImportError, ValueError) as e:
             # Missing package or invalid action
             return Response({'error': str(e)}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
@@ -129,8 +154,24 @@ class AiChatView(APIView):
                 context = f"{context}\n\n{page_text}".strip()
 
         try:
-            reply = services.run_chat(messages, page_context=context)
-            return Response({'reply': reply})
+            text, input_tokens, output_tokens = services.run_chat(messages, page_context=context)
+
+            # Log usage
+            try:
+                AiUsageLog.objects.create(
+                    user=request.user,
+                    call_type='chat',
+                    action_name='',
+                    provider=getattr(services.get_provider(), '__class__', type('', (), {'__name__': 'unknown'})).__name__,
+                    model=services.get_model('default'),
+                    input_tokens=input_tokens,
+                    output_tokens=output_tokens,
+                )
+            except Exception:
+                pass
+
+            return Response({'reply': text})
+
         except (ImportError, ValueError) as e:
             return Response({'error': str(e)}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
         except Exception as e:
@@ -138,6 +179,69 @@ class AiChatView(APIView):
                 {'error': f'AI provider error: {str(e)}'},
                 status=status.HTTP_502_BAD_GATEWAY,
             )
+
+
+class AiUsageView(APIView):
+    """
+    GET /api/ai/usage/
+
+    Returns the current user's AI usage summary.
+
+    Response shape:
+      {
+        "total_input_tokens":  int,   — all-time input tokens
+        "total_output_tokens": int,   — all-time output tokens
+        "calls_today":         int,   — calls made today (UTC)
+        "calls_this_month":    int,   — calls made this calendar month
+        "recent": [                   — last 10 calls
+          {
+            "call_type":    "action" | "chat",
+            "action_name":  str,   — e.g. "summarize", "" for chat
+            "model":        str,
+            "input_tokens": int,
+            "output_tokens": int,
+            "created_at":   ISO 8601 string
+          }
+        ]
+      }
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        qs = AiUsageLog.objects.filter(user=request.user)
+
+        now   = timezone.now()
+        today = now.date()
+
+        totals = qs.aggregate(
+            total_input=Sum('input_tokens'),
+            total_output=Sum('output_tokens'),
+        )
+
+        calls_today = qs.filter(created_at__date=today).count()
+        calls_this_month = qs.filter(
+            created_at__year=now.year,
+            created_at__month=now.month,
+        ).count()
+
+        recent = list(
+            qs.values(
+                'call_type', 'action_name', 'model',
+                'input_tokens', 'output_tokens', 'created_at',
+            )[:10]
+        )
+        # Serialize datetime to ISO string
+        for row in recent:
+            row['created_at'] = row['created_at'].isoformat()
+
+        return Response({
+            'total_input_tokens':  totals['total_input']  or 0,
+            'total_output_tokens': totals['total_output'] or 0,
+            'calls_today':         calls_today,
+            'calls_this_month':    calls_this_month,
+            'recent':              recent,
+        })
 
 
 # ─────────────────────────────────────────────────────────────────────────────

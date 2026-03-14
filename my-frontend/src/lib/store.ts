@@ -70,17 +70,20 @@ interface WorkspaceSlice {
 /**
  * UISlice — global UI state
  *
- * sidebarOpen:  whether the sidebar is visible (collapses on mobile)
- * aiPanelOpen:  whether the AI panel is open (right-side drawer in editor)
+ * sidebarOpen:      whether the sidebar is visible (mobile toggle + desktop hamburger)
+ * sidebarCollapsed: desktop-only collapse via the arrow button inside the sidebar
+ * aiPanelOpen:      whether the AI panel is open (right-side drawer in editor)
  */
 interface UISlice {
-  sidebarOpen:  boolean;
-  aiPanelOpen:  boolean;
+  sidebarOpen:      boolean;
+  sidebarCollapsed: boolean;
+  aiPanelOpen:      boolean;
 
-  toggleSidebar:  () => void;
-  setSidebarOpen: (open: boolean) => void;
-  toggleAiPanel:  () => void;
-  setAiPanelOpen: (open: boolean) => void;
+  toggleSidebar:         () => void;
+  setSidebarOpen:        (open: boolean) => void;
+  toggleSidebarCollapse: () => void;
+  toggleAiPanel:         () => void;
+  setAiPanelOpen:        (open: boolean) => void;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -152,14 +155,18 @@ export const useAppStore = create<AppStore>()(
 
       // ── UI slice ──────────────────────────────────────────────────────────
 
-      sidebarOpen: true,
-      aiPanelOpen: false,
+      sidebarOpen:      true,
+      sidebarCollapsed: false,
+      aiPanelOpen:      false,
 
       toggleSidebar: () => {
         set((state) => ({ sidebarOpen: !state.sidebarOpen }), false, 'ui/toggleSidebar');
       },
       setSidebarOpen: (open: boolean) => {
         set({ sidebarOpen: open }, false, 'ui/setSidebarOpen');
+      },
+      toggleSidebarCollapse: () => {
+        set((state) => ({ sidebarCollapsed: !state.sidebarCollapsed }), false, 'ui/toggleSidebarCollapse');
       },
       toggleAiPanel: () => {
         set((state) => ({ aiPanelOpen: !state.aiPanelOpen }), false, 'ui/toggleAiPanel');

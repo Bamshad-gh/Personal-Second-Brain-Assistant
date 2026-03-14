@@ -50,6 +50,7 @@ import type {
   ReorderBlocksPayload,
   AiActionPayload,
   AiChatPayload,
+  AiUsageSummary,
   ApiError,
 } from '@/types';
 
@@ -338,18 +339,25 @@ export const workspaceApi = {
 // PAGE API
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** pageApi — mirrors Django's /api/workspaces/:id/pages/ and /api/pages/ endpoints */
+/** pageApi — mirrors Django's /api/pages/ endpoints */
 export const pageApi = {
-  /** GET /api/workspaces/:workspaceId/pages/ — list all pages in a workspace
-   *  NOTE: this endpoint returns a flat array (not paginated) using PageTreeSerializer.
-   *  The response type is Page[] directly. usePages.ts handles the array vs paginated
-   *  difference with a guard check.
+  /**
+   * GET /api/pages/?workspace=<id> — list all pages in a workspace (for sidebar).
+   *
+   * BUG FIX (was /api/workspaces/:id/pages/):
+   *   The workspace-nested URL returns PageTreeSerializer (nested tree, no 'parent' field).
+   *   The frontend's flat-to-tree algorithm in PageTree.tsx requires a flat list with 'parent'.
+   *   Switching to /api/pages/?workspace=<id> returns PageListSerializer (flat, with 'parent').
+   *
+   * The backend has pagination_class = None on PageListCreateView, so this always
+   * returns a flat array (never a paginated {count, results} envelope).
    */
   list: async (workspaceId: string): Promise<Page[]> => {
     const { data } = await axiosInstance.get<Page[]>(
-      `/api/workspaces/${workspaceId}/pages/`,
+      '/api/pages/',
+      { params: { workspace: workspaceId } },
     );
-    return data;
+    return Array.isArray(data) ? data : (data as PaginatedResponse<Page>).results ?? [];
   },
 
   /**
@@ -484,6 +492,16 @@ export const aiApi = {
    */
   chat: async (payload: AiChatPayload): Promise<{ reply: string }> => {
     const { data } = await axiosInstance.post<{ reply: string }>('/api/ai/chat/', payload);
+    return data;
+  },
+
+  /**
+   * GET /api/ai/usage/
+   * Returns token usage summary for the current user.
+   * Used by the sidebar footer to show "X calls this month".
+   */
+  getUsage: async (): Promise<AiUsageSummary> => {
+    const { data } = await axiosInstance.get<AiUsageSummary>('/api/ai/usage/');
     return data;
   },
 };
