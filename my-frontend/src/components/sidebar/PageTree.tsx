@@ -10,7 +10,8 @@
  *   activePageId    — currently open page ID (for highlight)
  *   workspaceId     — needed to build navigation URLs
  *   onCreatePage    — called when user clicks + to add a page or child page
- *   onDeletePage    — called when user clicks trash icon
+ *   onUpdatePage    — called when user renames a page (from SidebarItem inline rename)
+ *   onDeletePage    — called when user confirms delete
  *
  * How to expand:
  *   - Add drag-and-drop reordering
@@ -43,11 +44,12 @@ interface PageNode {
 }
 
 interface PageTreeProps {
-  pages: Page[];
-  activePageId: string | null;
-  workspaceId: string;
-  onCreatePage: (parentId: string | null) => void;
-  onDeletePage: (pageId: string) => void;
+  pages:          Page[];
+  activePageId:   string | null;
+  workspaceId:    string;
+  onCreatePage:   (parentId: string | null) => void;
+  onUpdatePage:   (pageId: string, payload: { title: string }) => void;
+  onDeletePage:   (pageId: string) => void;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -93,6 +95,7 @@ export function PageTree({
   activePageId,
   workspaceId,
   onCreatePage,
+  onUpdatePage,
   onDeletePage,
 }: PageTreeProps) {
   const router = useRouter();
@@ -145,6 +148,7 @@ export function PageTree({
             setExpanded((prev) => new Set([...prev, parentId])); // auto-expand parent
             onCreatePage(parentId);
           }}
+          onUpdate={onUpdatePage}
           onDelete={onDeletePage}
           onToggle={toggleExpand}
         />,

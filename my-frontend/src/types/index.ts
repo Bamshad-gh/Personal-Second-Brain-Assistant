@@ -344,6 +344,12 @@ export interface CreateBlockPayload {
   content: Record<string, unknown>;
   order?: number;
   parent?: string | null;
+  // Canvas fields — only needed when creating a block directly on the canvas
+  canvas_x?: number | null;
+  canvas_y?: number | null;
+  canvas_w?: number | null;
+  canvas_h?: number | null;
+  canvas_z?: number | null;
 }
 
 // BUG FIX: removed block_type (BlockUpdateSerializer does not accept it).
@@ -351,6 +357,12 @@ export interface UpdateBlockPayload {
   content?: Record<string, unknown>;
   order?: number;
   parent?: string | null;
+  // Canvas position/size — updated on drag-end and resize-end
+  canvas_x?: number | null;
+  canvas_y?: number | null;
+  canvas_w?: number | null;
+  canvas_h?: number | null;
+  canvas_z?: number | null;
 }
 
 export interface ReorderBlocksPayload {
@@ -391,6 +403,115 @@ export interface AiUsageSummary {
     output_tokens: number;
     created_at:    string;
   }>;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// RELATIONS — page links and backlinks (Phase 2 Feature 1)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Connection — mirrors relations.Connection model (PAGE_LINK type only for now).
+ * Created when a user inserts a [[page link]] in the editor.
+ * The backend upserts on (conn_type, source_page, target_page) — no duplicates.
+ *
+ * Returned by: POST /api/relations/
+ */
+export interface Connection {
+  id: string;                        // UUID
+  conn_type: 'page_link';            // only PAGE_LINK connections are created from the editor
+  source_page: string;               // UUID of the page that contains the [[link]]
+  target_page: string;               // UUID of the page being linked to
+  metadata: Record<string, unknown>; // e.g. { anchor_text: 'My Notes' } — unused in Phase 1
+  created_at: string;                // ISO 8601
+}
+
+/**
+ * BacklinkPage — one item in the backlinks panel.
+ * A flat summary of a Connection, shaped for display (no extra joins needed).
+ *
+ * Returned by: GET /api/relations/pages/{id}/backlinks/
+ */
+export interface BacklinkPage {
+  id: string;                        // connection UUID (stable key for React lists)
+  source_page_id: string;            // UUID of the page that links here
+  source_page_title: string;         // title to display in the backlinks panel
+  source_page_workspace_id: string;  // workspace UUID — used to build the nav URL
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PROPERTIES — typed metadata fields on pages (Phase 2 Feature 2)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * PropType — mirrors PropertyDefinition.PropertyType choices.
+ * Each type controls how a value is displayed and edited in the UI.
+ */
+export type PropType =
+  | 'text' | 'number' | 'date' | 'checkbox' | 'select' | 'multi'
+  | 'url' | 'email' | 'phone' | 'currency' | 'relation' | 'file' | 'object';
+
+/** One option entry for select / multi-select property types */
+export interface SelectOption {
+  label:  string;
+  color?: string;  // optional tailwind color name, e.g. 'violet'
+}
+
+/**
+ * PropertyDefinition — mirrors properties.PropertyDefinition model.
+ * Describes the schema of a typed field (name, type, options).
+ * Belongs to a workspace; optionally scoped to a custom_page_type.
+ *
+ * Returned by: GET /api/properties/definitions/?workspace=<id>
+ */
+export interface PropertyDefinition {
+  id:               string;         // UUID — DRF serializes as string
+  workspace:        string;         // workspace UUID
+  custom_page_type: string | null;  // UUID or null if not scoped to a custom type
+  page_type:        string;         // built-in page type filter (blank = any)
+  name:             string;
+  prop_type:        PropType;
+  options:          SelectOption[]; // only used for select / multi types
+  order:            number;
+  is_global:        boolean;
+}
+
+/**
+ * PropertyValue — mirrors properties.PropertyValue model.
+ * The actual value of a property on a specific page.
+ * One row per (page, definition) pair.
+ *
+ * value_text is a TextField with blank=True (defaults to "" not null).
+ * All other value_* columns are nullable.
+ *
+ * Returned by: GET /api/properties/values/?page=<id>
+ */
+export interface PropertyValue {
+  id:           string;        // UUID — DRF serializes as string
+  page:         string;        // page UUID
+  definition:   string;        // PropertyDefinition UUID
+  value_text:   string;        // blank string when unset (not null — TextField)
+  value_number: number | null;
+  value_date:   string | null; // ISO 8601 datetime string
+  value_bool:   boolean | null;
+  value_json:   unknown | null; // select options (string[]), relations, etc.
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// HOVER CARD — lightweight page preview for [[Page Link]] chips
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * PagePreview — lightweight data returned by GET /api/pages/:id/preview/
+ * Used by the hover card shown when hovering [[Page Link]] chips in the editor.
+ */
+export interface PagePreview {
+  id:              string;
+  title:           string;
+  icon:            string;
+  page_type:       PageType;
+  content_preview: string;  // first 100 chars of plain text, never JSON
+  backlink_count:  number;
+  workspace_id:    string;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

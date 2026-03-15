@@ -17,7 +17,7 @@
  * How to expand: Add new API groups at the bottom following the same pattern.
  *           Each group should mirror one Django app's endpoints.
  *
- * Exports: axiosInstance, authApi, workspaceApi, pageApi, blockApi, aiApi
+ * Exports: axiosInstance, authApi, workspaceApi, pageApi, blockApi, aiApi, relationsApi
  */
 
 import axios, {
@@ -36,6 +36,11 @@ import type {
   Workspace,
   Page,
   Block,
+  Connection,
+  BacklinkPage,
+  PagePreview,
+  PropertyDefinition,
+  PropertyValue,
   AuthTokens,
   RefreshResponse,
   PaginatedResponse,
@@ -306,9 +311,10 @@ export const authApi = {
 /** workspaceApi — mirrors Django's /api/workspaces/ endpoints */
 export const workspaceApi = {
   /** GET /api/workspaces/ — list all workspaces the current user has access to */
-  list: async (): Promise<PaginatedResponse<Workspace>> => {
-    const { data } = await axiosInstance.get<PaginatedResponse<Workspace>>('/api/workspaces/');
-    return data;
+  list: async (): Promise<Workspace[]> => {
+    const { data } = await axiosInstance.get<PaginatedResponse<Workspace> | Workspace[]>('/api/workspaces/');
+    // Handle both DRF paginated { results: [...] } and flat array responses
+    return Array.isArray(data) ? data : data.results ?? [];
   },
 
   /** POST /api/workspaces/ — create a new workspace */
@@ -391,6 +397,30 @@ export const pageApi = {
   /** DELETE /api/pages/:id/ — soft delete */
   delete: async (id: string): Promise<void> => {
     await axiosInstance.delete(`/api/pages/${id}/`);
+  },
+
+  /** POST /api/pages/:id/duplicate/ — creates a copy of the page with all blocks */
+  duplicate: async (pageId: string): Promise<Page> => {
+    const { data } = await axiosInstance.post<Page>(`/api/pages/${pageId}/duplicate/`);
+    return data;
+  },
+
+  /**
+   * GET /api/relations/pages/:id/backlinks/
+   * Returns all pages that contain a [[link]] pointing to this page.
+   * Used by the BacklinksPanel at the bottom of the editor page.
+   */
+  backlinks: async (pageId: string): Promise<BacklinkPage[]> => {
+    const { data } = await axiosInstance.get<BacklinkPage[]>(
+      `/api/relations/pages/${pageId}/backlinks/`,
+    );
+    return data;
+  },
+
+  /** GET /api/pages/:id/preview/ — lightweight data for the hover card */
+  preview: async (pageId: string): Promise<PagePreview> => {
+    const { data } = await axiosInstance.get<PagePreview>(`/api/pages/${pageId}/preview/`);
+    return data;
   },
 };
 
@@ -502,6 +532,119 @@ export const aiApi = {
    */
   getUsage: async (): Promise<AiUsageSummary> => {
     const { data } = await axiosInstance.get<AiUsageSummary>('/api/ai/usage/');
+    return data;
+  },
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// RELATIONS API — page links (Phase 2 Feature 1)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * relationsApi — mirrors Django's /api/relations/ endpoints.
+ *
+ * Endpoint map:
+ *   POST /api/relations/  → create a page link connection (upserts — safe to call twice)
+ *
+ * Backlinks (GET) live on pageApi.backlinks() because they are logically
+ * part of reading a page, and the URL is nested under /api/relations/pages/.
+ *
+ * WHERE THIS IS CALLED:
+ *   src/components/editor/Editor.tsx → handlePageLinkSelect()
+ */
+// ─────────────────────────────────────────────────────────────────────────────
+// PROPERTIES API — typed metadata fields on pages (Phase 2 Feature 2)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * propertyApi — mirrors Django's /api/properties/ endpoints.
+ *
+ * Endpoint map:
+ *   GET    /api/properties/definitions/?workspace=<id>  → list definitions
+ *   POST   /api/properties/definitions/                 → create definition
+ *   PATCH  /api/properties/definitions/<id>/            → update definition
+ *   DELETE /api/properties/definitions/<id>/            → soft delete
+ *   GET    /api/properties/values/?page=<id>            → list values for a page
+ *   POST   /api/properties/values/                      → create value
+ *   PATCH  /api/properties/values/<id>/                 → update value
+ *
+ * Upsert pattern (no dedicated upsert endpoint):
+ *   The backend has unique_together=(page, definition) on PropertyValue.
+ *   POSTing a duplicate would return 400. The useUpsertValue hook in
+ *   useProperties.ts checks the cached value list and calls createValue or
+ *   updateValue accordingly — avoiding the unique constraint entirely.
+ */
+export const propertyApi = {
+  // ── Definitions ──────────────────────────────────────────────────────────
+
+  listDefinitions: async (workspaceId: string): Promise<PropertyDefinition[]> => {
+    const { data } = await axiosInstance.get<PropertyDefinition[]>(
+      '/api/properties/definitions/',
+      { params: { workspace: workspaceId } },
+    );
+    return data;
+  },
+
+  createDefinition: async (payload: Partial<PropertyDefinition>): Promise<PropertyDefinition> => {
+    const { data } = await axiosInstance.post<PropertyDefinition>(
+      '/api/properties/definitions/',
+      payload,
+    );
+    return data;
+  },
+
+  updateDefinition: async (id: string, payload: Partial<PropertyDefinition>): Promise<PropertyDefinition> => {
+    const { data } = await axiosInstance.patch<PropertyDefinition>(
+      `/api/properties/definitions/${id}/`,
+      payload,
+    );
+    return data;
+  },
+
+  deleteDefinition: async (id: string): Promise<void> => {
+    await axiosInstance.delete(`/api/properties/definitions/${id}/`);
+  },
+
+  // ── Values ────────────────────────────────────────────────────────────────
+
+  listValues: async (pageId: string): Promise<PropertyValue[]> => {
+    const { data } = await axiosInstance.get<PropertyValue[]>(
+      '/api/properties/values/',
+      { params: { page: pageId } },
+    );
+    return data;
+  },
+
+  createValue: async (payload: Partial<PropertyValue>): Promise<PropertyValue> => {
+    const { data } = await axiosInstance.post<PropertyValue>(
+      '/api/properties/values/',
+      payload,
+    );
+    return data;
+  },
+
+  updateValue: async (id: string, payload: Partial<PropertyValue>): Promise<PropertyValue> => {
+    const { data } = await axiosInstance.patch<PropertyValue>(
+      `/api/properties/values/${id}/`,
+      payload,
+    );
+    return data;
+  },
+};
+
+export const relationsApi = {
+  /**
+   * POST /api/relations/
+   * Records a [[page link]] connection between source and target pages.
+   * Called fire-and-forget when the user inserts a page link in the editor.
+   * Upserts on the backend — calling it twice for the same pair is safe.
+   */
+  createLink: async (sourcePageId: string, targetPageId: string): Promise<Connection> => {
+    const { data } = await axiosInstance.post<Connection>('/api/relations/', {
+      conn_type:   'page_link',
+      source_page: sourcePageId,
+      target_page: targetPageId,
+    });
     return data;
   },
 };

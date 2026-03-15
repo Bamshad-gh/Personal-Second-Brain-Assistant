@@ -1,33 +1,35 @@
 /*
  * globals.css
- *
- * Design system: Linear × Raycast × personal workspace
- *   Background: neutral-950 (near-black)
- *   Surface:    neutral-900 / neutral-800
- *   Text:       neutral-100 (primary), neutral-400 (secondary)
- *   Accent:     violet gradient (#7c3aed → #a855f7)
- *   Glow:       violet-500/30 box-shadow
+ * * STRUCTURE:
+ * 1. CONFIG: Tailwind & Theme Tokens
+ * 2. CORE: Base resets and Body styles
+ * 3. THEMES: Dark/Light Mode variable logic
+ * 4. COMPONENTS: Reusable UI (Cards, Glass, Sidebar)
+ * 5. EDITOR: TipTap & Slash Menu styles
+ * 6. ANIMATIONS: Keyframes and transitions
  */
 
 @import "tailwindcss";
 
-/* ── Theme tokens ─────────────────────────────────────────────────────────── */
+/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   1. CONFIG & THEME TOKENS
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
 
 @theme inline {
   --font-sans: var(--font-inter);
   --scrollbar-width: thin;
   --scrollbar-color: theme(colors.neutral.700) transparent;
 
-  /* Gradient shorthand tokens used in utility classes below */
+  /* Gradient Shorthands */
   --gradient-violet: linear-gradient(135deg, #7c3aed 0%, #a855f7 100%);
   --gradient-violet-subtle: linear-gradient(135deg, #7c3aed22 0%, #a855f722 100%);
 }
 
-/* ── Base resets ──────────────────────────────────────────────────────────── */
+/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   2. CORE & BASE RESETS
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
 
-*,
-*::before,
-*::after {
+*, *::before, *::after {
   box-sizing: border-box;
 }
 
@@ -36,80 +38,78 @@ html {
 }
 
 body {
-  background-color: #0a0a0a;
-  color: #f5f5f5;
+  background-color: var(--app-bg, #0a0a0a);
+  color: var(--text, #f5f5f5);
   overflow-y: scroll;
 }
 
-/* ── Custom scrollbar ─────────────────────────────────────────────────────── */
-
-::-webkit-scrollbar {
-  width: 5px;
-  height: 5px;
+/* --- Custom Scrollbar --- */
+::-webkit-scrollbar { width: 5px; height: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { 
+  background-color: #2a2a2a; 
+  border-radius: 9999px; 
 }
+::-webkit-scrollbar-thumb:hover { background-color: #404040; }
 
-::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-::-webkit-scrollbar-thumb {
-  background-color: #2a2a2a;
-  border-radius: 9999px;
-}
-
-::-webkit-scrollbar-thumb:hover {
-  background-color: #404040;
-}
-
-/* ── Focus ring ───────────────────────────────────────────────────────────── */
-
+/* --- Global States --- */
 :focus-visible {
   outline: 2px solid #8b5cf6;
   outline-offset: 2px;
 }
-
-/* ── Text selection ───────────────────────────────────────────────────────── */
 
 ::selection {
   background-color: #4c1d95;
   color: #ede9fe;
 }
 
-/* ══════════════════════════════════════════════════════════════════════════
-   UTILITY CLASSES — use these in components via className="..."
-   ══════════════════════════════════════════════════════════════════════════ */
+/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   3. THEME SYSTEM (Dark / Light Mode)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
 
-/* ── Gradient text — violet glow ─────────────────────────────────────────── */
+:root, .dark {
+  --app-bg: #0a0a0a;
+  --surface: #171717;
+  --border: #262626;
+  --text: #f5f5f5;
+  --text-muted: #a3a3a3;
 
-.gradient-text {
-  background: linear-gradient(135deg, #a78bfa 0%, #c084fc 50%, #e879f9 100%);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
+  /* Violet accent — used by page link chips, focus rings, and other accent UI.
+     Defined here so they work in both dark and light mode overrides below. */
+  --violet:          #7c3aed;
+  --violet-light:    #a78bfa;
+  --violet-bg:       rgba(109, 40, 217, 0.15);
+  --violet-bg-hover: rgba(109, 40, 217, 0.25);
 }
 
-/* ── Subtle violet glow box-shadow ───────────────────────────────────────── */
-
-.glow-violet {
-  box-shadow: 0 0 0 1px rgba(139, 92, 246, 0.3),
-              0 0 20px rgba(139, 92, 246, 0.15),
-              0 0 40px rgba(139, 92, 246, 0.05);
+.light {
+  --app-bg: #fafafa;
+  --surface: #ffffff;
+  --border: #e5e5e5;
+  --text: #0a0a0a;
+  --text-muted: #525252;
 }
 
-.glow-violet-sm {
-  box-shadow: 0 0 0 1px rgba(139, 92, 246, 0.25),
-              0 0 10px rgba(139, 92, 246, 0.1);
+/* Light Mode structural overrides - Ensures Tailwind utility classes adapt */
+.light body { background-color: var(--app-bg); color: var(--text); }
+.light .bg-neutral-950 { background-color: #f5f5f5; }
+.light .bg-neutral-900 { background-color: #ffffff; }
+.light .bg-neutral-800 { background-color: #e5e5e5; }
+.light .border-neutral-800 { border-color: #d4d4d4; }
+.light .text-neutral-100 { color: #0a0a0a; }
+.light .text-neutral-400 { color: #525252; }
+
+/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   4. UI COMPONENTS & UTILITIES
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+
+/* --- Cards & Surfaces --- */
+.glass {
+  background: rgba(17, 17, 17, 0.85);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(255,255,255,0.06);
 }
-
-/* ── Dot grid background — used in auth layout ────────────────────────────── */
-
-.bg-dot-grid {
-  background-image: radial-gradient(circle, #2a2a2a 1px, transparent 1px);
-  background-size: 28px 28px;
-}
-
-/* ── Gradient border card — glowing border without a real border ──────────── */
-/*    Usage: wrap content in .gradient-border > .gradient-border-inner         */
 
 .gradient-border {
   background: linear-gradient(135deg, rgba(139,92,246,0.5), rgba(168,85,247,0.2), rgba(30,27,75,0.1));
@@ -120,50 +120,284 @@ body {
 .gradient-border-inner {
   background: #111111;
   border-radius: 15px;
-  width: 100%;
-  height: 100%;
+  width: 100%; height: 100%;
 }
+.light .gradient-border-inner { background: #ffffff; }
 
-/* ── Card hover lift ─────────────────────────────────────────────────────── */
-
-.card-hover {
-  transition: transform 150ms ease, box-shadow 150ms ease, border-color 150ms ease;
-}
-
-.card-hover:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 8px 24px rgba(0,0,0,0.4), 0 0 0 1px rgba(139,92,246,0.2);
-}
-
-/* ── Sidebar active item — violet left accent bar ────────────────────────── */
+/* --- Sidebar --- */
+.sidebar-item { transition: background 120ms ease, color 120ms ease; }
 
 .sidebar-item-active {
   background: rgba(139, 92, 246, 0.08);
   box-shadow: inset 2px 0 0 #7c3aed;
   color: #e2d9f3;
 }
+.light .sidebar-item-active { color: #4c1d95; }
 
-/* ── Glassmorphism surface ────────────────────────────────────────────────── */
-
-.glass {
-  background: rgba(17, 17, 17, 0.85);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
-  border: 1px solid rgba(255,255,255,0.06);
+/* --- Effects & Backgrounds --- */
+.gradient-text {
+  background: linear-gradient(135deg, #a78bfa 0%, #c084fc 50%, #e879f9 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
 }
 
-/* ── Fade-in animation ────────────────────────────────────────────────────── */
+.glow-violet {
+  box-shadow: 0 0 0 1px rgba(139, 92, 246, 0.3), 0 0 20px rgba(139, 92, 246, 0.15);
+}
+
+.bg-dot-grid {
+  background-image: radial-gradient(circle, #2a2a2a 1px, transparent 1px);
+  background-size: 28px 28px;
+}
+.light .bg-dot-grid { background-image: radial-gradient(circle, #d4d4d4 1px, transparent 1px); }
+
+/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   5. WORKSPACE ACCENT SYSTEM
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+
+[data-workspace-color="white"]  { --ws-accent: #e5e5e5; --ws-accent-soft: rgba(229,229,229,0.04); }
+[data-workspace-color="red"]    { --ws-accent: #ef4444; --ws-accent-soft: rgba(239,68,68,0.06);   }
+[data-workspace-color="green"]  { --ws-accent: #22c55e; --ws-accent-soft: rgba(34,197,94,0.06);   }
+[data-workspace-color="yellow"] { --ws-accent: #eab308; --ws-accent-soft: rgba(234,179,8,0.06);   }
+[data-workspace-color="blue"]   { --ws-accent: #3b82f6; --ws-accent-soft: rgba(59,130,246,0.06);  }
+[data-workspace-color="purple"] { --ws-accent: #a855f7; --ws-accent-soft: rgba(168,85,247,0.06);  }
+
+.sidebar-workspace-tint {
+  background-color: var(--ws-accent-soft, transparent);
+  border-right: 1px solid color-mix(in srgb, var(--ws-accent, #262626) 20%, var(--border));
+}
+
+.sidebar-item-active-ws {
+  background: color-mix(in srgb, var(--ws-accent, #7c3aed) 12%, transparent);
+  box-shadow: inset 2px 0 0 var(--ws-accent, #7c3aed);
+  color: color-mix(in srgb, var(--ws-accent, #a78bfa) 80%, #ffffff);
+}
+
+/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   6. EDITOR (TIPTAP & SLASH MENU)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+
+.tiptap-editor .ProseMirror { outline: none; min-height: 60vh; padding: 0 0 4rem; }
+
+/* Headings — Tailwind preflight resets font-size/weight to inherit, so we must be explicit */
+.tiptap-editor .ProseMirror h1 {
+  font-size: 2rem;
+  font-weight: 700;
+  color: #f5f5f5;
+  margin-top: 2rem;
+  margin-bottom: 0.5rem;
+  line-height: 1.2;
+}
+.tiptap-editor .ProseMirror h2 {
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: #e5e5e5;
+  margin-top: 1.75rem;
+  margin-bottom: 0.5rem;
+  line-height: 1.3;
+}
+.tiptap-editor .ProseMirror h3 {
+  font-size: 1.25rem;
+  font-weight: 600;
+  color: #e5e5e5;
+  margin-top: 1.5rem;
+  margin-bottom: 0.5rem;
+  line-height: 1.4;
+}
+.light .tiptap-editor .ProseMirror h1,
+.light .tiptap-editor .ProseMirror h2,
+.light .tiptap-editor .ProseMirror h3 { color: #171717; }
+
+.tiptap-editor .ProseMirror p {
+  margin-bottom: 0.75rem;
+}
+
+/* Lists — Tailwind preflight removes list-style and padding */
+.tiptap-editor .ProseMirror ul,
+.tiptap-editor .ProseMirror ol {
+  padding-left: 1.5rem;
+  margin-bottom: 0.75rem;
+}
+.tiptap-editor .ProseMirror ul { list-style-type: disc; }
+.tiptap-editor .ProseMirror ol { list-style-type: decimal; }
+.tiptap-editor .ProseMirror li { margin-bottom: 0.25rem; }
+.tiptap-editor .ProseMirror li p { margin-bottom: 0; }
+
+/* Blockquote */
+.tiptap-editor .ProseMirror blockquote {
+  border-left: 3px solid #7c3aed;
+  padding-left: 1rem;
+  margin: 1rem 0;
+  color: #a3a3a3;
+  font-style: italic;
+}
+.light .tiptap-editor .ProseMirror blockquote { color: #525252; }
+
+/* Horizontal rule */
+.tiptap-editor .ProseMirror hr {
+  border: none;
+  border-top: 1px solid #262626;
+  margin: 1.5rem 0;
+}
+.light .tiptap-editor .ProseMirror hr { border-color: #e5e5e5; }
+
+/* Inline code — NOT code blocks (those use CustomCodeBlock with syntax highlighting) */
+.tiptap-editor .ProseMirror :not(pre) > code {
+  background: #1f1f1f;
+  border: 1px solid #2a2a2a;
+  border-radius: 4px;
+  padding: 0.1em 0.4em;
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 0.875em;
+  color: #d4a574;
+}
+.light .tiptap-editor .ProseMirror :not(pre) > code {
+  background: #f5f5f5;
+  border-color: #e5e5e5;
+  color: #b45309;
+}
+
+/* Bold / italic — survive Tailwind preflight */
+.tiptap-editor .ProseMirror strong { font-weight: 700; }
+.tiptap-editor .ProseMirror em     { font-style: italic; }
+
+/* Task List */
+.tiptap-editor .ProseMirror ul[data-type="taskList"] { list-style: none; padding-left: 0; }
+.tiptap-editor .ProseMirror ul[data-type="taskList"] li { display: flex; gap: 0.5rem; align-items: flex-start; }
+.tiptap-editor .ProseMirror ul[data-type="taskList"] li[data-checked="true"] > div {
+  text-decoration: line-through;
+  opacity: 0.5;
+}
+
+/* Slash Menu Popup */
+.slash-menu {
+  background: #111111;
+  border: 1px solid #262626;
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.6);
+  padding: 4px;
+  min-width: 240px;
+  max-width: 320px;
+  max-height: 320px;
+  overflow-y: auto;
+}
+.light .slash-menu { background: #ffffff; border-color: #e5e5e5; }
+
+.slash-menu-group {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #525252;
+  padding: 6px 8px 2px;
+}
+
+.slash-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 6px 8px;
+  border-radius: 6px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+  color: #e5e5e5;
+  transition: background 0.1s;
+}
+
+.slash-menu-item:hover, .slash-menu-item.selected {
+  background: rgba(139, 92, 246, 0.1);
+}
+
+.slash-menu-item-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  background: #1f1f1f;
+  color: #a3a3a3;
+  flex-shrink: 0;
+}
+
+.slash-menu-item-text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.slash-menu-item-label {
+  font-size: 13px;
+  font-weight: 500;
+  color: #e5e5e5;
+  white-space: nowrap;
+}
+
+.slash-menu-item-desc {
+  font-size: 11px;
+  color: #737373;
+  white-space: nowrap;
+}
+
+.light .slash-menu-item          { color: #171717; }
+.light .slash-menu-item-icon     { background: #f5f5f5; color: #525252; }
+.light .slash-menu-item-label    { color: #171717; }
+.light .slash-menu-item-desc     { color: #737373; }
+
+/* Page Link Chip — the [[Page Title]] inline node rendered by PageLinkNode.
+   Uses CSS variables from :root so colors are consistent with the rest of the
+   violet accent system. The chip is an atom node so it can never be edited
+   in-place — only inserted (via [[ popup) or deleted as a whole. */
+.tiptap-editor .ProseMirror span.page-link-node {
+  color:            var(--violet-light);
+  background:       var(--violet-bg);
+  border-radius:    4px;
+  padding:          0.1em 0.4em;
+  cursor:           pointer;
+  /* Inherit body font so the chip blends with surrounding text */
+  font-family:      inherit;
+  font-size:        inherit;
+  transition:       background 150ms ease, color 150ms ease;
+}
+.tiptap-editor .ProseMirror span.page-link-node:hover {
+  background: var(--violet-bg-hover);
+  /* Slightly brighter text on hover to reinforce it's a link */
+  color:      #c4b5fd;
+}
+
+/* Light mode — the same variables work fine since --violet-bg uses rgba
+   with low opacity; they show as a soft violet tint on white backgrounds. */
+.light .tiptap-editor .ProseMirror span.page-link-node {
+  color: var(--violet);
+}
+
+/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   7. SYNTAX HIGHLIGHTING (VS Code Style)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+
+.hljs-comment { color: #6a9955; }
+.hljs-keyword { color: #569cd6; }
+.hljs-string  { color: #ce9178; }
+.hljs-number  { color: #b5cea8; }
+
+.light .hljs-keyword { color: #0000ff; }
+.light .hljs-string  { color: #a31515; }
+
+/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   8. ANIMATIONS
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
 
 @keyframes fadeIn {
   from { opacity: 0; transform: translateY(6px); }
   to   { opacity: 1; transform: translateY(0); }
 }
 
-.animate-fade-in {
-  animation: fadeIn 0.2s ease forwards;
-}
-
-/* ── Shimmer loading animation ────────────────────────────────────────────── */
+.animate-fade-in { animation: fadeIn 0.2s ease forwards; }
 
 @keyframes shimmer {
   0%   { background-position: -200% 0; }
@@ -171,177 +405,36 @@ body {
 }
 
 .animate-shimmer {
-  background: linear-gradient(
-    90deg,
-    #1a1a1a 0%,
-    #2a2a2a 50%,
-    #1a1a1a 100%
-  );
+  background: linear-gradient(90deg, #1a1a1a 0%, #2a2a2a 50%, #1a1a1a 100%);
   background-size: 200% 100%;
   animation: shimmer 1.4s ease infinite;
 }
 
-/* ── TipTap editor styles ─────────────────────────────────────────────────── */
-
-.tiptap-editor .ProseMirror {
-  outline: none;
-  min-height: 60vh;
-  padding: 0 0 4rem;
+/* Card Hover Effect */
+.card-hover { transition: all 150ms ease; }
+.card-hover:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 24px rgba(0,0,0,0.4), 0 0 0 1px rgba(139,92,246,0.2);
 }
 
-.tiptap-editor .ProseMirror p.is-editor-empty:first-child::before {
-  content: attr(data-placeholder);
-  color: #404040;
-  pointer-events: none;
-  float: left;
-  height: 0;
-}
-
-.tiptap-editor .ProseMirror h1 { font-size: 1.875rem; font-weight: 700; margin: 1.5rem 0 0.5rem; color: #f5f5f5; }
-.tiptap-editor .ProseMirror h2 { font-size: 1.5rem;   font-weight: 600; margin: 1.25rem 0 0.5rem; color: #f5f5f5; }
-.tiptap-editor .ProseMirror h3 { font-size: 1.25rem;  font-weight: 600; margin: 1rem 0 0.5rem; color: #e5e5e5; }
-
-.tiptap-editor .ProseMirror p  { margin: 0.25rem 0; line-height: 1.75; color: #d4d4d4; }
-
-.tiptap-editor .ProseMirror blockquote {
-  border-left: 3px solid #7c3aed;
-  margin: 1rem 0;
-  padding: 0.5rem 1rem;
-  background: rgba(124,58,237,0.06);
-  border-radius: 0 6px 6px 0;
-  color: #a3a3a3;
-}
-
-.tiptap-editor .ProseMirror code {
-  background: #1a1a1a;
-  border: 1px solid #2a2a2a;
-  border-radius: 4px;
-  padding: 0.15em 0.4em;
-  font-size: 0.875em;
-  font-family: 'JetBrains Mono', 'Fira Code', monospace;
-  color: #a78bfa;
-}
-
-.tiptap-editor .ProseMirror pre {
-  background: #111;
-  border: 1px solid #1f1f1f;
-  border-radius: 8px;
-  padding: 1rem 1.25rem;
-  margin: 1rem 0;
-  overflow-x: auto;
-}
-
-.tiptap-editor .ProseMirror pre code {
-  background: none;
-  border: none;
-  padding: 0;
-  color: #d4d4d4;
-  font-size: 0.875rem;
-  line-height: 1.7;
-}
-
-.tiptap-editor .ProseMirror ul,
-.tiptap-editor .ProseMirror ol {
-  padding-left: 1.5rem;
-  margin: 0.5rem 0;
-  color: #d4d4d4;
-}
-
-.tiptap-editor .ProseMirror li { margin: 0.2rem 0; line-height: 1.75; }
-
-/* Task list */
+/* Force Task List to hide default bullets */
 .tiptap-editor .ProseMirror ul[data-type="taskList"] {
-  list-style: none;
-  padding-left: 0.25rem;
+  list-style: none !important; /* Forces bullets to disappear */
+  padding: 0 !important;
+  margin-left: 0.5rem;
 }
 
 .tiptap-editor .ProseMirror ul[data-type="taskList"] li {
   display: flex;
   align-items: flex-start;
-  gap: 0.5rem;
+  margin-bottom: 0.25rem;
 }
 
-.tiptap-editor .ProseMirror ul[data-type="taskList"] li > label {
-  margin-top: 0.3rem;
-  flex-shrink: 0;
-}
-
+/* Ensure the checkbox is visible and spaced */
 .tiptap-editor .ProseMirror ul[data-type="taskList"] input[type="checkbox"] {
-  accent-color: #7c3aed;
-  width: 14px;
-  height: 14px;
+  margin-right: 0.75rem;
+  margin-top: 0.4rem;
   cursor: pointer;
+  flex-shrink: 0; /* Prevents checkbox from squishing */
 }
 
-/* Horizontal rule */
-.tiptap-editor .ProseMirror hr {
-  border: none;
-  border-top: 1px solid #2a2a2a;
-  margin: 1.5rem 0;
-}
-
-/* Link */
-.tiptap-editor .ProseMirror a {
-  color: #a78bfa;
-  text-decoration: underline;
-  text-underline-offset: 3px;
-}
-
-/* Highlight mark */
-.tiptap-editor .ProseMirror mark {
-  border-radius: 3px;
-  padding: 0 2px;
-}
-
-/* ══════════════════════════════════════════════════════════════════════════
-   THEME — dark (default) and light CSS variable overrides
-   The app uses Tailwind classes (bg-neutral-950 etc.) as the dark theme.
-   Light mode overrides are applied by adding class="light" to <html>.
-   ══════════════════════════════════════════════════════════════════════════ */
-
-/* Dark theme — variables match the existing Tailwind color palette */
-:root,
-.dark {
-  --app-bg:      #0a0a0a;
-  --surface:     #171717;
-  --border:      #262626;
-  --text:        #f5f5f5;
-  --text-muted:  #a3a3a3;
-}
-
-/* Light theme — applied when next-themes sets class="light" on <html> */
-.light {
-  --app-bg:      #fafafa;
-  --surface:     #ffffff;
-  --border:      #e5e5e5;
-  --text:        #0a0a0a;
-  --text-muted:  #525252;
-}
-
-/* Apply light-mode structural overrides */
-.light body {
-  background-color: var(--app-bg);
-  color: var(--text);
-}
-
-.light .bg-neutral-950  { background-color: #f5f5f5; }
-.light .bg-neutral-900  { background-color: #ffffff; }
-.light .bg-neutral-800  { background-color: #e5e5e5; }
-.light .border-neutral-800 { border-color: #d4d4d4; }
-.light .text-neutral-100 { color: #0a0a0a; }
-.light .text-neutral-200 { color: #171717; }
-.light .text-neutral-300 { color: #262626; }
-.light .text-neutral-400 { color: #525252; }
-.light .text-neutral-500 { color: #737373; }
-.light .text-neutral-600 { color: #a3a3a3; }
-
-/* Light mode TipTap text */
-.light .tiptap-editor .ProseMirror h1,
-.light .tiptap-editor .ProseMirror h2,
-.light .tiptap-editor .ProseMirror h3 { color: #0a0a0a; }
-.light .tiptap-editor .ProseMirror p  { color: #262626; }
-.light .tiptap-editor .ProseMirror ul,
-.light .tiptap-editor .ProseMirror ol { color: #262626; }
-
-/* Sidebar item transition */
-.sidebar-item { transition: background 120ms ease, color 120ms ease; }

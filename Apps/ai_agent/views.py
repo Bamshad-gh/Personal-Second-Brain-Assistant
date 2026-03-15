@@ -5,9 +5,10 @@ AI API views.
 ════════════════════════════════════════════════════════════════════
 ENDPOINT MAP
 ════════════════════════════════════════════════════════════════════
-  POST /api/ai/action/  → AiActionView  (predefined text actions)
-  POST /api/ai/chat/    → AiChatView    (free-form conversation)
-  GET  /api/ai/usage/   → AiUsageView   (token usage summary for current user)
+  POST /api/ai/action/      → AiActionView    (predefined text actions)
+  POST /api/ai/chat/        → AiChatView      (free-form conversation)
+  GET  /api/ai/usage/       → AiUsageView     (token usage summary)
+  POST /api/ai/transcribe/  → TranscribeView  (Whisper audio → text)
 All registered in: Apps/ai_agent/urls.py → config/urls.py
 ════════════════════════════════════════════════════════════════════
 """
@@ -242,6 +243,60 @@ class AiUsageView(APIView):
             'calls_this_month':    calls_this_month,
             'recent':              recent,
         })
+
+
+class TranscribeView(APIView):
+    """
+    POST /api/ai/transcribe/
+
+    Accepts a multipart audio file recorded by the browser's MediaRecorder API
+    (webm format). Transcribes it using OpenAI Whisper and returns the text.
+
+    This is the voice-input fallback for browsers that don't support the
+    Web Speech API (e.g. Firefox). Chrome/Edge use the native API directly
+    and never call this endpoint.
+
+    Request:  multipart/form-data, field "audio" — audio/webm blob
+    Response: { "text": "transcribed text..." }
+
+    Errors:
+      400 — no file or file too large (Whisper max is 25 MB)
+      502 — Whisper API error
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        from openai import OpenAI
+
+        audio_file = request.FILES.get('audio')
+        if not audio_file:
+            return Response(
+                {'error': 'No audio file provided. Send a multipart field named "audio".'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Whisper rejects files over 25 MB
+        if audio_file.size > 25 * 1024 * 1024:
+            return Response(
+                {'error': 'Audio file too large. Maximum size is 25 MB.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            from django.conf import settings as django_settings
+            client = OpenAI(api_key=django_settings.OPENAI_API_KEY)
+            transcript = client.audio.transcriptions.create(
+                model='whisper-1',
+                file=audio_file,
+                response_format='text',
+            )
+            return Response({'text': transcript})
+        except Exception as e:
+            return Response(
+                {'error': f'Transcription error: {str(e)}'},
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
 
 
 # ─────────────────────────────────────────────────────────────────────────────

@@ -9,12 +9,15 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "@radix-ui/react-icons": "^1.3.2",
     "@tanstack/react-query": "^5.90.21",
     "@tanstack/react-query-devtools": "^5.91.3",
     "@tiptap/extension-character-count": "^3.20.1",
     "@tiptap/extension-code-block-lowlight": "^3.20.1",
     "@tiptap/extension-color": "^3.20.1",
+    "@tiptap/extension-drag-handle-react": "^3.20.1",
     "@tiptap/extension-highlight": "^3.20.1",
+    "@tiptap/extension-image": "^3.20.1",
     "@tiptap/extension-placeholder": "^3.20.1",
     "@tiptap/extension-task-item": "^3.20.1",
     "@tiptap/extension-task-list": "^3.20.1",
@@ -23,6 +26,7 @@
     "@tiptap/pm": "^3.20.1",
     "@tiptap/react": "^3.20.1",
     "@tiptap/starter-kit": "^3.20.1",
+    "@tiptap/suggestion": "^3.20.1",
     "axios": "^1.13.6",
     "framer-motion": "^12.36.0",
     "js-cookie": "^3.0.5",

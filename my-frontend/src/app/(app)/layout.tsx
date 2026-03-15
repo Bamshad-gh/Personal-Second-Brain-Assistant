@@ -34,12 +34,13 @@ import { AppShellClient } from './AppShellClient';
 
 const SESSION_FLAG_COOKIE = 'has_session';
 
-interface AppLayoutProps {
-  children: ReactNode;
-  params: Promise<{ workspaceId?: string; pageId?: string }>;
-}
-
-export default async function AppLayout({ children, params }: AppLayoutProps) {
+// NOTE: No params here — this layout sits at (app)/ which has no dynamic
+// segment of its own. workspaceId and pageId live in nested routes
+// ([workspaceId]/ and [workspaceId]/[pageId]/). Next.js App Router does NOT
+// pass nested dynamic params up to ancestor layouts, so reading
+// params.workspaceId here always returns undefined.
+// AppShellClient uses useParams() instead — it reads the full URL client-side.
+export default async function AppLayout({ children }: { children: ReactNode }) {
   // Server-side auth check — runs before any JS loads in the browser
   const cookieStore = await cookies();
   const hasSession = cookieStore.get(SESSION_FLAG_COOKIE)?.value === 'true';
@@ -48,15 +49,5 @@ export default async function AppLayout({ children, params }: AppLayoutProps) {
     redirect('/login');
   }
 
-  // Await params to get workspaceId from the URL (if present)
-  const resolvedParams = await params;
-  const workspaceId = resolvedParams?.workspaceId ?? null;
-  const pageId = resolvedParams?.pageId ?? null;
-
-  return (
-    // AppShellClient handles sidebar toggle state (client-side)
-    <AppShellClient workspaceId={workspaceId} pageId={pageId}>
-      {children}
-    </AppShellClient>
-  );
+  return <AppShellClient>{children}</AppShellClient>;
 }

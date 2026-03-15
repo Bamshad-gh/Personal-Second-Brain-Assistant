@@ -27,7 +27,11 @@ export default function WorkspaceRedirectPage() {
   const { data: workspaces, isLoading, isError } = useWorkspaces();
 
   useEffect(() => {
-    if (isLoading) return; // wait for data
+    // Wait for AuthInitializer to restore the session before the query fires.
+    // Without this guard, isLoading=false + workspaces=undefined (query disabled)
+    // triggers an immediate redirect to /workspace/create on every page refresh.
+    if (!isAuthenticated) return;
+    if (isLoading) return;
 
     if (isError || !workspaces) {
       // API error — send to create since we can't determine what to show
@@ -44,7 +48,7 @@ export default function WorkspaceRedirectPage() {
     // Redirect to the first workspace
     // TODO: replace with last-visited workspace from localStorage
     router.replace(`/${workspaces[0].id}`);
-  }, [workspaces, isLoading, isError, router]);
+  }, [workspaces, isLoading, isError, router, isAuthenticated]);
 
   // Show a loading state while redirecting
   return (

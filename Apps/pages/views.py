@@ -21,6 +21,27 @@ from .serializers import (
 from Apps.workspaces.models import Workspace
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Helper — extract plain text from TipTap JSON doc
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _extract_tiptap_text(node: dict, max_chars: int = 100) -> str:
+    """Walk a TipTap JSON doc recursively and collect all text node values."""
+    parts: list[str] = []
+
+    def walk(n: object) -> None:
+        if not isinstance(n, dict):
+            return
+        if n.get('type') == 'text':
+            parts.append(n.get('text', ''))
+        for child in n.get('content', []):
+            walk(child)
+
+    walk(node)
+    result = ' '.join(parts).strip()
+    return result[:max_chars]
+
+
 class PageListCreateView(generics.ListCreateAPIView):
     """
     GET  /api/pages/               → List all pages for current user
@@ -254,3 +275,49 @@ class PageDuplicateView(APIView):
                 block_mapping[block.id] = new_block
 
         return Response(PageSerializer(new_page).data, status=201)
+
+
+class PagePreviewView(APIView):
+    """GET /api/pages/<pk>/preview/ — lightweight preview for hover cards."""
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, pk):
+        from Apps.blocks.models import Block
+        from Apps.relations.models import Connection
+
+        page = get_object_or_404(
+            Page,
+            pk=pk,
+            workspace__owner=request.user,
+            is_deleted=False,
+        )
+
+        # ── Extract plain-text preview from TipTap JSON ──────────────────────
+        content_preview = ''
+        block = (
+            Block.objects
+            .filter(page=page, block_type='text', is_deleted=False)
+            .order_by('order')
+            .first()
+        )
+        if block and isinstance(block.content, dict):
+            tiptap_json = block.content.get('json', {})
+            content_preview = _extract_tiptap_text(tiptap_json, max_chars=100)
+
+        # ── Count backlinks ──────────────────────────────────────────────────
+        backlink_count = Connection.objects.filter(
+            target_page=page,
+            conn_type=Connection.ConnectionType.PAGE_LINK,
+            is_deleted=False,
+        ).count()
+
+        return Response({
+            'id':              str(page.id),
+            'title':           page.title,
+            'icon':            page.icon,
+            'page_type':       page.page_type,
+            'content_preview': content_preview,
+            'backlink_count':  backlink_count,
+            'workspace_id':    str(page.workspace_id),
+        })

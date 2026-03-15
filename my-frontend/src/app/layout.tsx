@@ -16,6 +16,7 @@
  *   ThemeProvider config: next-themes — attribute="class", defaultTheme="dark"
  */
 
+
 import type { Metadata } from 'next';
 import { Inter } from 'next/font/google';
 import { ThemeProvider } from 'next-themes';

@@ -1,40 +1,101 @@
 /**
  * app/(app)/AppShellClient.tsx
  *
- * What:    The client-side half of the app shell. Renders the sidebar and
- *          main content area. Manages the sidebar toggle button.
+ * What:    The client-side app shell. Manages the sidebar, top bar,
+ *          and blocks rendering until the auth token is restored.
  *
  * Why split from layout.tsx:
- *   layout.tsx is a Server Component (reads cookies, does auth check).
- *   The sidebar toggle needs useState — a Client Component.
- *   Splitting keeps the auth logic server-side and the UI logic client-side.
+ *          layout.tsx is a Server Component — it reads cookies for the
+ *          initial auth check but cannot use React state or effects.
+ *          This file handles everything that needs client-side React.
  *
- * Props:
- *   workspaceId — from the URL params (null on non-workspace routes)
- *   pageId      — from the URL params (null on non-page routes)
- *   children    — the page content
+ * Auth flow:
+ *          1. AuthInitializer mounts and restores the JWT access token
+ *          2. A spinner is shown while this happens
+ *          3. Once onReady() fires, the full UI renders
+ *          This prevents the Sidebar from making API calls before the
+ *          token is available, which would cause a redirect to login.
+ *
+ * Sidebar params:
+ *          workspaceId and pageId come from useParams() not from props.
+ *          Next.js App Router layouts cannot receive dynamic params from
+ *          nested route segments — useParams() reads the full URL correctly.
+ *
+ * To expand:
+ *          - Add a right-side AI panel drawer
+ *          - Add breadcrumbs to the top bar
+ *          - Add a keyboard shortcut for sidebar toggle (Cmd+B)
+ *          - Add a command palette trigger (Cmd+K)
  */
 
 'use client';
 
-import type { ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
+import { useParams } from 'next/navigation';
 import { Menu } from 'lucide-react';
 import { useAppStore } from '@/lib/store';
 import { Sidebar } from '@/components/sidebar/Sidebar';
+import { AuthInitializer } from '@/components/AuthInitializer';
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Types
+// ─────────────────────────────────────────────────────────────────────────────
 
 interface AppShellClientProps {
-  workspaceId: string | null;
-  pageId: string | null;
+  /** Page content from Next.js — rendered inside the main area */
   children: ReactNode;
 }
 
-export function AppShellClient({ workspaceId, pageId, children }: AppShellClientProps) {
-  const toggleSidebar = useAppStore((state) => state.toggleSidebar);
-  const sidebarOpen = useAppStore((state) => state.sidebarOpen);
+// ─────────────────────────────────────────────────────────────────────────────
+// Component
+// ─────────────────────────────────────────────────────────────────────────────
 
+export function AppShellClient({ children }: AppShellClientProps) {
+
+  // ── URL params — read from the current page URL ───────────────────────────
+  // useParams() always returns all dynamic segments regardless of nesting depth
+  const params      = useParams<{ workspaceId?: string; pageId?: string }>();
+  const workspaceId = params.workspaceId ?? null;
+  const pageId      = params.pageId      ?? null;
+
+  // ── Global state ──────────────────────────────────────────────────────────
+  const toggleSidebar    = useAppStore((s) => s.toggleSidebar);
+  const sidebarOpen      = useAppStore((s) => s.sidebarOpen);
+  const sidebarCollapsed = useAppStore((s) => s.sidebarCollapsed);
+
+  // ── Auth ready state ──────────────────────────────────────────────────────
+  // Blocks the UI from rendering until AuthInitializer has restored the token.
+  // Without this gate, Sidebar mounts and makes API calls before the token
+  // is available, causing a redirect to login on every page refresh.
+  const [authReady, setAuthReady] = useState(false);
+
+  // ── Sidebar margin — shifts main content right when sidebar is open ───────
+  const sidebarMargin = workspaceId && sidebarOpen
+    ? sidebarCollapsed
+      ? 'md:ml-12'         // collapsed rail — 48px
+      : 'md:ml-[260px]'    // full sidebar — 260px
+    : '';                  // no sidebar or sidebar closed — no margin
+
+  // ── Loading state — shown while token is being restored ──────────────────
+  if (!authReady) {
+    return (
+      <>
+        {/* AuthInitializer runs in background, calls onReady when done */}
+        <AuthInitializer onReady={() => setAuthReady(true)} />
+
+        {/* Spinner — shown while token restore is in progress */}
+        <div className="flex min-h-screen items-center justify-center bg-neutral-950">
+          <div className="h-6 w-6 animate-spin rounded-full border-2 border-neutral-700 border-t-violet-500" />
+        </div>
+      </>
+    );
+  }
+
+  // ── Main render — only shown after auth is ready ──────────────────────────
   return (
     <div className="flex min-h-screen bg-neutral-950">
-      {/* ── Sidebar — only shown when a workspace is active ──────────────── */}
+
+      {/* ── Sidebar — only shown when inside a workspace ──────────────────── */}
       {workspaceId && (
         <Sidebar
           workspaceId={workspaceId}
@@ -46,17 +107,20 @@ export function AppShellClient({ workspaceId, pageId, children }: AppShellClient
       <main
         className={[
           'flex flex-1 flex-col min-w-0 transition-all duration-200',
-          // On desktop, shift right to make room for the sidebar
-          workspaceId && sidebarOpen ? 'md:ml-[260px]' : '',
+          sidebarMargin,
         ].join(' ')}
       >
-        {/* ── Top bar: sidebar toggle + page-level content ─────────────── */}
+
+        {/* ── Top bar ───────────────────────────────────────────────────────── */}
         <div className="flex items-center gap-2 px-4 py-3 border-b border-neutral-800/60">
-          {/* Sidebar toggle — always visible, useful on all screen sizes */}
+
+          {/* Sidebar toggle — always visible so user can reopen closed sidebar */}
           {workspaceId && (
             <button
               onClick={toggleSidebar}
-              className="flex h-7 w-7 items-center justify-center rounded-md text-neutral-500 hover:bg-neutral-800 hover:text-neutral-300 transition-colors"
+              className="flex h-7 w-7 items-center justify-center rounded-md
+                         text-neutral-500 hover:bg-neutral-800 hover:text-neutral-300
+                         transition-colors shrink-0"
               aria-label={sidebarOpen ? 'Close sidebar' : 'Open sidebar'}
             >
               <Menu size={16} />
@@ -64,10 +128,11 @@ export function AppShellClient({ workspaceId, pageId, children }: AppShellClient
           )}
         </div>
 
-        {/* ── Page content ─────────────────────────────────────────────── */}
+        {/* ── Page content ──────────────────────────────────────────────────── */}
         <div className="flex-1">
           {children}
         </div>
+
       </main>
     </div>
   );

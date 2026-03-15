@@ -102,6 +102,12 @@ export function useUpdatePage(workspaceId: string) {
         queryClient.setQueryData(pageKeys.all(workspaceId), context.previousPages);
       }
     },
+    onSuccess: (_data, { id }) => {
+      // Invalidate the individual page detail so view_mode change
+      // triggers a re-render without needing a full page refresh
+      queryClient.invalidateQueries({ queryKey: pageKeys.detail(id) });
+    },
+
 
     onSettled: () => {
       // Always refetch after mutation to sync with server

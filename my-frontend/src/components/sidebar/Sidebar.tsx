@@ -19,14 +19,14 @@
 'use client';
 
 import { useEffect } from 'react';
+import { useRouter } from 'next/navigation';
 import { usePathname } from 'next/navigation';
 import { Plus, LogOut, Settings, PanelLeftClose } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useQuery } from '@tanstack/react-query';
 import { useAppStore } from '@/lib/store';
 import { useWorkspaces, useWorkspace } from '@/hooks/useWorkspace';
-import { usePages } from '@/hooks/usePages';
-import { useCreatePage, useDeletePage } from '@/hooks/usePages';
+import { usePages, useCreatePage, useDeletePage, useUpdatePage } from '@/hooks/usePages';
 import { authApi, aiApi } from '@/lib/api';
 import { WorkspaceSwitcher } from './WorkspaceSwitcher';
 import { PageTree } from './PageTree';
@@ -47,18 +47,19 @@ interface SidebarProps {
 
 export function Sidebar({ workspaceId, activePageId }: SidebarProps) {
   const pathname = usePathname();
+  const router = useRouter();
 
   // ── Global state ──────────────────────────────────────────────────────────
-  const { user, logout, activeWorkspace, setActiveWorkspace, sidebarOpen, setSidebarOpen, toggleSidebarCollapse } =
-    useAppStore((state) => ({
-      user: state.user,
-      logout: state.logout,
-      activeWorkspace: state.activeWorkspace,
-      setActiveWorkspace: state.setActiveWorkspace,
-      sidebarOpen: state.sidebarOpen,
-      setSidebarOpen: state.setSidebarOpen,
-      toggleSidebarCollapse: state.toggleSidebarCollapse,
-    }));
+  // Each selector returns a single primitive or stable function reference.
+  // NEVER return an object literal from a selector — it creates a new reference
+  // on every render, causing useSyncExternalStore to loop infinitely.
+  const user                  = useAppStore((s) => s.user);
+  const logout                = useAppStore((s) => s.logout);
+  const activeWorkspace       = useAppStore((s) => s.activeWorkspace);
+  const setActiveWorkspace    = useAppStore((s) => s.setActiveWorkspace);
+  const sidebarOpen           = useAppStore((s) => s.sidebarOpen);
+  const setSidebarOpen        = useAppStore((s) => s.setSidebarOpen);
+  const sidebarCollapsed      = useAppStore((s) => s.sidebarCollapsed);
 
   // ── Data ──────────────────────────────────────────────────────────────────
   const { data: workspaces = [] } = useWorkspaces();
@@ -66,6 +67,7 @@ export function Sidebar({ workspaceId, activePageId }: SidebarProps) {
   const { data: pages = [], isLoading: pagesLoading } = usePages(workspaceId);
   const createPage = useCreatePage(workspaceId);
   const deletePage = useDeletePage(workspaceId);
+  const updatePage = useUpdatePage(workspaceId);
   const { data: aiUsage } = useQuery({
     queryKey: ['ai-usage'],
     queryFn: () => aiApi.getUsage(),
@@ -90,12 +92,12 @@ export function Sidebar({ workspaceId, activePageId }: SidebarProps) {
   async function handleCreatePage(parentId: string | null = null) {
     try {
       const newPage = await createPage.mutateAsync({
-        title: '',
-        parent: parentId,
+        title:     'Untitled',
+        parent:    parentId,
         page_type: 'note',
       });
-      // Navigate to the new page immediately
-      window.location.href = `/${workspaceId}/${newPage.id}`;
+      // Navigate into the new page immediately
+      router.push(`/${workspaceId}/${newPage.id}`);
     } catch {
       toast.error('Could not create page. Please try again.');
     }
@@ -107,10 +109,19 @@ export function Sidebar({ workspaceId, activePageId }: SidebarProps) {
       await deletePage.mutateAsync(pageId);
       // If the deleted page was the active one, redirect to workspace home
       if (activePageId === pageId) {
-        window.location.href = `/${workspaceId}`;
+        router.push(`/${workspaceId}`);
       }
     } catch {
       toast.error('Could not delete page. Please try again.');
+    }
+  }
+
+  /** Rename a page — optimistic update via useUpdatePage */
+  async function handleUpdatePage(pageId: string, payload: { title: string }) {
+    try {
+      await updatePage.mutateAsync({ id: pageId, payload });
+    } catch {
+      toast.error('Could not rename page.');
     }
   }
 
@@ -142,12 +153,13 @@ export function Sidebar({ workspaceId, activePageId }: SidebarProps) {
 
       {/* ── Sidebar panel ────────────────────────────────────────────────── */}
       <aside
+        data-workspace-color={displayWorkspace?.color ?? 'white'}
         className={[
-          'fixed left-0 top-0 z-30 flex h-full w-[260px] flex-col',
-          'border-r border-neutral-800 bg-neutral-900',
-          'transition-transform duration-200 ease-in-out',
-          sidebarOpen ? 'translate-x-0' : '-translate-x-full',
-          'md:translate-x-0', // always visible on desktop
+          'sidebar-workspace-tint',
+          'fixed left-0 top-0 h-screen z-40 flex flex-col',
+          'transition-all duration-200',
+          sidebarCollapsed ? 'w-12' : 'w-[260px]',
+          sidebarOpen ? 'translate-x-0' : '-translate-x-full md:-translate-x-full',
         ].join(' ')}
       >
         {/* ── Header: workspace switcher + collapse button ───────────────── */}
@@ -164,7 +176,7 @@ export function Sidebar({ workspaceId, activePageId }: SidebarProps) {
           </div>
           {/* Collapse — hides the sidebar; use the hamburger in top bar to reopen */}
           <button
-            onClick={() => { toggleSidebarCollapse(); setSidebarOpen(false); }}
+            onClick={() => setSidebarOpen(false)}
             className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-neutral-600 hover:bg-neutral-800 hover:text-neutral-300 transition-colors"
             title="Collapse sidebar"
           >
@@ -201,6 +213,7 @@ export function Sidebar({ workspaceId, activePageId }: SidebarProps) {
               activePageId={activePageId}
               workspaceId={workspaceId}
               onCreatePage={handleCreatePage}
+              onUpdatePage={handleUpdatePage}
               onDeletePage={handleDeletePage}
             />
           )}

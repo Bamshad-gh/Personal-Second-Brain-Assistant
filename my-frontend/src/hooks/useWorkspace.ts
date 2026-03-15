@@ -55,7 +55,7 @@ export function useWorkspaces() {
     queryKey: workspaceKeys.all,
     queryFn: () => workspaceApi.list(),
     enabled: isAuthenticated,
-    select: (data) => data.results, // unwrap the DRF paginated response
+    // No select needed — workspaceApi.list() already normalises to Workspace[]
   });
 }
 
@@ -120,10 +120,10 @@ export function useUpdateWorkspace(id: string) {
 /** useDeleteWorkspace — soft-deletes a workspace and clears it from cache */
 export function useDeleteWorkspace() {
   const queryClient = useQueryClient();
-  const { activeWorkspace, setActiveWorkspace } = useAppStore((state) => ({
-    activeWorkspace: state.activeWorkspace,
-    setActiveWorkspace: state.setActiveWorkspace,
-  }));
+  // Individual selectors — returning an object literal here would create a new
+  // reference on every render and cause an infinite useSyncExternalStore loop.
+  const activeWorkspace    = useAppStore((s) => s.activeWorkspace);
+  const setActiveWorkspace = useAppStore((s) => s.setActiveWorkspace);
 
   return useMutation({
     mutationFn: (id: string) => workspaceApi.delete(id),

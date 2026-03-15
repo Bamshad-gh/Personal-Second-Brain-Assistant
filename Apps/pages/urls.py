@@ -7,6 +7,7 @@ from .views import (
     PageChildrenView,
     PageMoveView,
     PageDuplicateView,
+    PagePreviewView,
 )
 
 urlpatterns = [
@@ -27,4 +28,7 @@ urlpatterns = [
 
     # Duplicate page
     path('<uuid:pk>/duplicate/', PageDuplicateView.as_view(), name='page-duplicate'),
+
+    # Hover-card preview
+    path('<uuid:pk>/preview/', PagePreviewView.as_view(), name='page-preview'),
 ]

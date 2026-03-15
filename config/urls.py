@@ -26,6 +26,12 @@ urlpatterns = [
 
     # AI endpoints (action + chat)
     path('api/ai/', include('Apps.ai_agent.urls')),
+
+    # Relations endpoints (page links, backlinks)
+    path('api/relations/', include('Apps.relations.urls')),
+
+    # Properties endpoints (definitions + values)
+    path('api/properties/', include('Apps.properties.urls')),
 ]
 
 # Serve media files in development

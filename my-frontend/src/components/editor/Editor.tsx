@@ -4,60 +4,91 @@
  * What:    The TipTap rich-text editor. Clean, distraction-free writing surface.
  *
  * Features:
- *   - Starter-kit (bold, italic, lists, headings, code, blockquote, hr, undo/redo)
+ *   - StarterKit (bold, italic, lists, headings, code, blockquote, hr, undo/redo)
  *   - Task list (checkbox to-dos)
- *   - Code blocks with lowlight syntax highlighting
+ *   - Code blocks with syntax highlighting + language selector (CustomCodeBlock)
  *   - Highlight (multi-color), TextStyle + Color (text color)
+ *   - Toggle block (collapsible section)
  *   - Placeholder text
  *   - Inline toolbar: Bold / Italic / Code / H1 / H2 / H3 / List / Todo / Highlight / Color / Voice
- *   - Slash ("/") command menu for inserting block types
+ *   - Slash ("/") command menu via @tiptap/suggestion (SlashCommand extension)
+ *   - Page link ("[[") popup via @tiptap/suggestion (PageLink extension) — Phase 2
  *   - Autosave: calls onSave(json) 500ms after the last keystroke
  *   - Save indicator: "Saving…" / "Saved ✓" in the toolbar
- *   - Voice-to-text via Web Speech API (no extra packages)
+ *   - Voice-to-text: Web Speech API (Chrome/Edge) + Whisper fallback (all others)
+ *   - Block handle: hover "+" button to insert paragraph below (AddBlockHandle, pure React)
  *
  * Props:
  *   initialContent  — JSON content from the database (or null for a new page)
  *   onSave          — called with the editor's JSON when autosave fires
+ *   onTextChange    — called on every content change with plain text (for AI context)
  *   readOnly        — disables editing (for locked pages)
+ *   workspaceId     — UUID of the current workspace; used by the page link popup to
+ *                     load and filter workspace pages (Phase 2)
+ *   pageId          — UUID of the current page; used to record page link connections
+ *                     via relationsApi.createLink(pageId, targetPageId) (Phase 2)
  *
  * WHERE TO FIND THINGS
- *   Extensions list:     useEditor({ extensions: [...] }) below
- *   Toolbar buttons:     "Inline format toolbar" section below
- *   Voice handler:       toggleVoice() function below
+ *   Extensions list:     useEditor({ extensions: [...] }) below — TIPTAP SETUP section
+ *   Toolbar buttons:     TOOLBAR COMPONENTS section below
+ *   Voice handler:       toggleVoice() + startNativeSpeech() + startWhisperRecording() below
  *   Slash commands:      src/components/editor/SlashMenu.tsx → COMMANDS array
+ *   Slash extension:     src/components/editor/extensions/SlashCommand.ts
+ *   Page link extension: src/components/editor/extensions/PageLink.ts
+ *   Page link popup:     src/components/editor/PageLinkPopup.tsx
+ *   Code block UI:       src/components/editor/extensions/CodeBlockWrapper.tsx
  *   Toggle block:        src/components/editor/extensions/ToggleBlock.ts
+ *   Block handle:        AddBlockHandle in src/components/editor/BlockWrapper.tsx
  */
 
 'use client';
 
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// IMPORTS — all external and internal dependencies
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
 import { useEffect, useRef, useCallback, useState } from 'react';
-import { useEditor, EditorContent } from '@tiptap/react';
-import StarterKit from '@tiptap/starter-kit';
-import Placeholder from '@tiptap/extension-placeholder';
-import TaskList from '@tiptap/extension-task-list';
-import TaskItem from '@tiptap/extension-task-item';
-import Typography from '@tiptap/extension-typography';
-import CodeBlockLowlight from '@tiptap/extension-code-block-lowlight';
-import Highlight from '@tiptap/extension-highlight';
-import { TextStyle } from '@tiptap/extension-text-style';
-import Color from '@tiptap/extension-color';
-import { common, createLowlight } from 'lowlight';
-import { ToggleBlock } from './extensions/ToggleBlock';
+import { useRouter }                                 from 'next/navigation';
+import { useEditor, EditorContent }                  from '@tiptap/react';
+import type { Editor as TipTapEditor }               from '@tiptap/core';
+import StarterKit                                    from '@tiptap/starter-kit';
+import Placeholder                                   from '@tiptap/extension-placeholder';
+import TaskList                                      from '@tiptap/extension-task-list';
+import TaskItem                                      from '@tiptap/extension-task-item';
+import Highlight                                     from '@tiptap/extension-highlight';
+import { TextStyle }                                 from '@tiptap/extension-text-style';
+import Color                                         from '@tiptap/extension-color';
+import Image                                         from '@tiptap/extension-image';
+import toast                                         from 'react-hot-toast';
+
+import { getAccessToken }                            from '@/lib/auth';
+import { relationsApi }                              from '@/lib/api';
+import { usePages }                                  from '@/hooks/usePages';
+import type { Page }                                 from '@/types';
+
+import { CustomCodeBlock }                           from './extensions/CustomCodeBlock';
+import { SlashCommand }                              from './extensions/SlashCommand';
+import { ToggleBlock }                               from './extensions/ToggleBlock';
+import { PageLinkNode, PageLinkSuggestion }          from './extensions/PageLink';
+import { SlashMenuPortal }                           from './SlashMenuPortal';
+import { SlashMenuList }                             from './SlashMenu';
+import type { SlashMenuHandle, SlashCommandItem }    from './SlashMenu';
+import { PageLinkPopup }                             from './PageLinkPopup';
+import type { PageLinkPopupHandle }                  from './PageLinkPopup';
+import { PageHoverCard }                             from './PageHoverCard';
+import { AddBlockHandle }                            from './BlockWrapper';
+import { slashEventBus }                             from '@/lib/slashEventBus';
+import type { SlashOpenPayload }                     from '@/lib/slashEventBus';
+import { pageLinkEventBus }                          from '@/lib/pageLinkEventBus';
+import type { PageLinkOpenPayload }                  from '@/lib/pageLinkEventBus';
 import {
   Bold, Italic, Code, CheckCheck, Clock,
   List, CheckSquare, Highlighter, Palette, Mic, MicOff,
 } from 'lucide-react';
-import { SlashMenu } from './SlashMenu';
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Lowlight instance — syntax highlighting for code blocks
-// ─────────────────────────────────────────────────────────────────────────────
-
-const lowlight = createLowlight(common);
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Types
-// ─────────────────────────────────────────────────────────────────────────────
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// TYPES — EditorProps interface and SaveStatus
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 interface EditorProps {
   initialContent:  Record<string, unknown> | null;
@@ -66,11 +97,15 @@ interface EditorProps {
    *  Used by the AI panel to get the page text as context. */
   onTextChange?:   (text: string) => void;
   readOnly?:       boolean;
+  /** UUID of the current workspace — used by the [[ page link popup */
+  workspaceId:     string;
+  /** UUID of the current page — used to record page link connections */
+  pageId:          string;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Autosave hook — fires onSave 500ms after the last change
-// ─────────────────────────────────────────────────────────────────────────────
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// AUTOSAVE HOOK — fires onSave 500ms after the last change
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 type SaveStatus = 'idle' | 'saving' | 'saved';
 
@@ -111,93 +146,240 @@ function useAutosave(
   return { triggerSave, status };
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Component
-// ─────────────────────────────────────────────────────────────────────────────
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// COMPONENT — main Editor export
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-export function Editor({ initialContent, onSave, onTextChange, readOnly = false }: EditorProps) {
-  // ── Slash menu state ──────────────────────────────────────────────────────
-  const [slashOpen,  setSlashOpen]  = useState(false);
-  const [slashQuery, setSlashQuery] = useState('');
-  const [slashPos,   setSlashPos]   = useState({ top: 0, left: 0 });
-  const editorContainerRef = useRef<HTMLDivElement>(null);
+export function Editor({
+  initialContent,
+  onSave,
+  onTextChange,
+  readOnly = false,
+  workspaceId,
+  pageId,
+}: EditorProps) {
 
-  // ── Voice-to-text state ───────────────────────────────────────────────────
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  // STATE — all useState and useRef declarations
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  // Slash menu
+  const [slashOpen,    setSlashOpen]    = useState(false);
+  const [slashItems,   setSlashItems]   = useState<SlashCommandItem[]>([]);
+  const [slashRect,    setSlashRect]    = useState<DOMRect | null>(null);
+  const [slashCommand, setSlashCommand] = useState<((item: SlashCommandItem) => void) | null>(null);
+  const slashMenuRef = useRef<SlashMenuHandle>(null);
+
+  // Page link popup (Phase 2 — [[ trigger)
+  const [pageLinkOpen,  setPageLinkOpen]  = useState(false);
+  const [pageLinkQuery, setPageLinkQuery] = useState('');
+  const [pageLinkRect,  setPageLinkRect]  = useState<DOMRect | null>(null);
+  // Range stored as a ref — updated on every keystroke but only read on selection.
+  // Using a ref (not state) avoids an extra re-render per keystroke.
+  const pageLinkRangeRef = useRef<{ from: number; to: number } | null>(null);
+  const pageLinkPopupRef = useRef<PageLinkPopupHandle>(null);
+
+  // Voice-to-text
   const [isRecording, setIsRecording] = useState(false);
+
+  // Chrome/Edge: native Web Speech API ref
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const recognitionRef = useRef<any>(null);
 
-  // ── TipTap editor ─────────────────────────────────────────────────────────
+  // Firefox and others: MediaRecorder-based Whisper path
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef   = useRef<Blob[]>([]);
+
+  // Hover card — shown 500ms after hovering a [[Page Link]] chip
+  const [hoveredPageId,      setHoveredPageId]      = useState<string | null>(null);
+  const [hoveredChipRect,    setHoveredChipRect]    = useState<DOMRect | null>(null);
+  const [hoveredWorkspaceId, setHoveredWorkspaceId] = useState<string | null>(null);
+  const hoverTimerRef   = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const dismissTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Block handle — tracks which block the pointer is over for the "+" button
+  const [blockHandle, setBlockHandle] = useState<{
+    top:        number;
+    nodePos:    number;
+    isListItem: boolean;
+  } | null>(null);
+
+  // Autosave ref — keeps onUpdate from capturing a stale triggerSave.
+  // useEditor() is called before useAutosave(), so triggerSave does not exist
+  // yet at the time the onUpdate closure is created. A ref bridges the gap:
+  // onUpdate always calls the latest version via the ref, avoiding stale closures.
+  const triggerSaveRef = useRef<(() => void) | null>(null);
+
+  // Router — used by handleEditorClick for page link chip navigation
+  const router = useRouter();
+
+  // Workspace pages — loaded for the [[ page link search popup
+  const { data: workspacePages = [] } = usePages(workspaceId);
+
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  // TIPTAP SETUP — useEditor call and extensions config
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
   const editor = useEditor({
     immediatelyRender: false, // fix SSR hydration mismatch
+
     editable: !readOnly,
 
     extensions: [
+      /**
+       * StarterKit — all sub-extensions declared explicitly.
+       *
+       * WHY explicit: In TipTap v3, leaving options unspecified can cause
+       * silent conflicts when other extensions (e.g. CodeBlockLowlight) also
+       * register node types. Explicit config makes conflicts obvious.
+       *
+       * codeBlock: false — we use CustomCodeBlock (CodeBlockLowlight + UI)
+       * instead of StarterKit's built-in plain code block.
+       *
+       * NOTE: @tiptap/extension-typography is intentionally EXCLUDED.
+       * It conflicts with block-level node parsing in TipTap v3 — enabling it
+       * causes all block types (headings, lists, etc.) to merge into plain text.
+       */
       StarterKit.configure({
-        // We use the CodeBlockLowlight extension instead of the built-in one
-        codeBlock: false,
-        // heading levels we support
-        heading: { levels: [1, 2, 3] },
+        heading:        { levels: [1, 2, 3] },
+        codeBlock:      false,      // replaced by CustomCodeBlock below
+        /**
+         * hardBreak: false — CRITICAL for correct block behaviour.
+         *
+         * With hardBreak enabled (the default), Shift+Enter inserts a <br>
+         * INSIDE the current block node rather than splitting it. This makes
+         * the editor feel like "everything is one continuous block" because
+         * newlines never create new ProseMirror nodes. Disabling it makes
+         * both Enter AND Shift+Enter split the current node into two separate
+         * block-level nodes, which is the expected Notion-style behaviour.
+         */
+        hardBreak:      false,
+        bulletList:     {},
+        orderedList:    {},
+        listItem:       {},
+        blockquote:     {},
+        horizontalRule: {},
+        bold:           {},
+        italic:         {},
+        strike:         {},
+        code:           {},
       }),
+
+      // Code blocks with syntax highlighting + language selector dropdown
+      // (CustomCodeBlock wraps CodeBlockLowlight with a ReactNodeViewRenderer)
+      CustomCodeBlock,
+
+      // Placeholder — context-aware message per node type
       Placeholder.configure({
-        placeholder: "Press '/' for commands, or start writing…",
+        placeholder: ({ node }) => {
+          if (node.type.name === 'heading') return 'Heading...';
+          return "Type '/' for commands, '[[ ' to link a page, or start writing…";
+        },
       }),
+
+      // Text formatting
+      TextStyle,                              // required by Color
+      Color,                                  // text color via setColor()
+      Highlight.configure({ multicolor: true }), // background highlight
+
+      // Custom toggle block — collapsible section with open/close state
+      ToggleBlock,
+
+      // Task list (checkbox to-dos)
       TaskList,
       TaskItem.configure({ nested: true }),
-      Typography,
-      CodeBlockLowlight.configure({ lowlight }),
-      // Text formatting extensions
-      TextStyle,                               // required by Color
-      Color,                                   // text color via setColor()
-      Highlight.configure({ multicolor: true }),// background highlight
-      ToggleBlock,                               // collapsible toggle block
+
+      // Slash command palette — intercepts "/" using @tiptap/suggestion
+      // (replaces the old manual detection in onUpdate)
+      SlashCommand,
+
+      // Page link chip — intercepts "[[" using @tiptap/suggestion (Phase 2)
+      // PageLinkNode:       inline atom node that renders as [[Title]] chip
+      // PageLinkSuggestion: suggestion plugin that fires pageLinkEventBus events
+      PageLinkNode,
+      PageLinkSuggestion,
+
+      // Image blocks — base64 preview (Phase 2 will upload to Django)
+      // inline:false  → image is its own block node, not inline
+      // allowBase64   → accept data URIs from paste/drop/file picker
+      Image.configure({ inline: false, allowBase64: true }),
     ],
 
     content: initialContent ?? undefined,
 
-    // editorProps adds our CSS class for scoped editor styles
     editorProps: {
-      attributes: { class: 'tiptap-editor' },
+      attributes: {},
+
+      /**
+       * handlePaste — intercept clipboard images.
+       * When the user pastes an image (Ctrl+V / Cmd+V) the browser puts a
+       * File item in clipboardData. We read it as a base64 data URL and
+       * insert it as an image node. Returns true to prevent TipTap's default
+       * paste handling for that item.
+       */
+      handlePaste(view, event) {
+        const items = event.clipboardData?.items;
+        if (!items) return false;
+
+        for (const item of Array.from(items)) {
+          if (!item.type.startsWith('image/')) continue;
+
+          const file = item.getAsFile();
+          if (!file) continue;
+
+          const reader = new FileReader();
+          reader.onload = (e) => {
+            const src = e.target?.result as string;
+            if (!src) return;
+            view.dispatch(
+              view.state.tr.replaceSelectionWith(
+                view.state.schema.nodes.image.create({ src }),
+              ),
+            );
+          };
+          reader.readAsDataURL(file);
+          return true; // consumed — suppress TipTap's default paste
+        }
+        return false;
+      },
+
+      /**
+       * handleDrop — intercept image files dragged into the editor.
+       * Inserts the image at the drop position rather than the selection.
+       */
+      handleDrop(view, event) {
+        const files = event.dataTransfer?.files;
+        if (!files?.length) return false;
+
+        for (const file of Array.from(files)) {
+          if (!file.type.startsWith('image/')) continue;
+
+          const reader = new FileReader();
+          reader.onload = (e) => {
+            const src = e.target?.result as string;
+            if (!src) return;
+            const coordinates = view.posAtCoords({
+              left: event.clientX,
+              top:  event.clientY,
+            });
+            if (!coordinates) return;
+            const node = view.state.schema.nodes.image.create({ src });
+            view.dispatch(
+              view.state.tr.insert(coordinates.pos, node),
+            );
+          };
+          reader.readAsDataURL(file);
+          return true;
+        }
+        return false;
+      },
     },
 
     onUpdate({ editor: e }) {
-      triggerSave();
-      // Notify parent with plain text (used by AI panel for context)
-      if (onTextChange) {
-        onTextChange(e.getText());
-      }
-
-      // ── Slash menu detection ────────────────────────────────────────────
-      // Check if the current text node starts with "/"
-      const { state } = e;
-      const { $from } = state.selection;
-
-      // Get the text of the current paragraph from its start to the cursor
-      const paraStart = $from.start();
-      const textBefore = state.doc.textBetween(paraStart, $from.pos, '\0', '\0');
-
-      if (textBefore.startsWith('/')) {
-        // Everything after the "/" is the query for filtering commands
-        setSlashQuery(textBefore.slice(1));
-
-        // Position the menu below the cursor using the editor DOM
-        const domAtPos = e.view.domAtPos($from.pos);
-        const node     = domAtPos.node instanceof Text
-          ? domAtPos.node.parentElement
-          : (domAtPos.node as HTMLElement);
-
-        if (node && editorContainerRef.current) {
-          const containerRect = editorContainerRef.current.getBoundingClientRect();
-          const nodeRect      = node.getBoundingClientRect();
-          setSlashPos({
-            top:  nodeRect.bottom - containerRect.top + 4,
-            left: nodeRect.left   - containerRect.left,
-          });
-          setSlashOpen(true);
-        }
-      } else {
-        setSlashOpen(false);
-      }
+      // Call via ref so this closure always reaches the latest triggerSave,
+      // even though useAutosave() runs after useEditor() in call order.
+      triggerSaveRef.current?.();
+      if (onTextChange) onTextChange(e.getText());
     },
   });
 
@@ -206,6 +388,82 @@ export function Editor({ initialContent, onSave, onTextChange, readOnly = false 
     () => editor?.getJSON() as Record<string, unknown> ?? null,
     onSave,
   );
+
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  // EFFECTS — triggerSave sync, slash menu listeners, page link listeners,
+  //           content sync, voice cleanup
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  // Keep the triggerSave ref in sync so onUpdate always calls the latest version.
+  // Cleanup: set to null so a pending rAF/timer can't fire after unmount.
+  useEffect(() => {
+    triggerSaveRef.current = triggerSave;
+    return () => { triggerSaveRef.current = null; };
+  }, [triggerSave]);
+
+  // Slash menu event listeners — uses slashEventBus (lib/slashEventBus.ts), a
+  // standalone module-level bus that SlashCommand.ts emits on.
+  useEffect(() => {
+    const onOpen = (data: SlashOpenPayload) => {
+      setSlashItems(data.items);
+      setSlashRect(data.rect);
+      setSlashCommand(() => data.command);
+      setSlashOpen(true);
+    };
+    const onUpdate = (data: SlashOpenPayload) => {
+      setSlashItems(data.items);
+      setSlashRect(data.rect);
+      setSlashCommand(() => data.command);
+    };
+    const onKeydown = (data: { event: KeyboardEvent }) => {
+      slashMenuRef.current?.onKeyDown(data.event);
+    };
+    const onClose = () => { setSlashOpen(false); };
+
+    slashEventBus.on('slash:open',    onOpen);
+    slashEventBus.on('slash:update',  onUpdate);
+    slashEventBus.on('slash:keydown', onKeydown);
+    slashEventBus.on('slash:close',   onClose);
+
+    return () => {
+      slashEventBus.off('slash:open',    onOpen);
+      slashEventBus.off('slash:update',  onUpdate);
+      slashEventBus.off('slash:keydown', onKeydown);
+      slashEventBus.off('slash:close',   onClose);
+    };
+  }, []); // bus is a module-level singleton — no dependency needed
+
+  // Page link event listeners — pageLinkEventBus (lib/pageLinkEventBus.ts),
+  // emitted by PageLinkSuggestion in extensions/PageLink.ts.
+  useEffect(() => {
+    const onOpen = (data: PageLinkOpenPayload) => {
+      // Store the ProseMirror range in a ref — needed by handlePageLinkSelect
+      // to delete "[[query" before inserting the node. Using a ref avoids
+      // a re-render on every keystroke while the popup is open.
+      pageLinkRangeRef.current = data.range;
+      setPageLinkQuery(data.query);
+      setPageLinkRect(data.rect);
+      setPageLinkOpen(true);
+    };
+    const onKeydown = (data: { event: KeyboardEvent }) => {
+      // Delegate ArrowUp / ArrowDown / Enter to the popup's imperative handle
+      pageLinkPopupRef.current?.onKeyDown(data.event);
+    };
+    const onClose = () => {
+      setPageLinkOpen(false);
+      pageLinkRangeRef.current = null;
+    };
+
+    pageLinkEventBus.on('pagelink:open',    onOpen);
+    pageLinkEventBus.on('pagelink:keydown', onKeydown);
+    pageLinkEventBus.on('pagelink:close',   onClose);
+
+    return () => {
+      pageLinkEventBus.off('pagelink:open',    onOpen);
+      pageLinkEventBus.off('pagelink:keydown', onKeydown);
+      pageLinkEventBus.off('pagelink:close',   onClose);
+    };
+  }, []); // bus is a module-level singleton — no dependency needed
 
   // Update content when initialContent changes (page navigation)
   useEffect(() => {
@@ -219,25 +477,42 @@ export function Editor({ initialContent, onSave, onTextChange, readOnly = false 
     }
   }, [editor, initialContent]);
 
-  // ── Voice-to-text handler (Web Speech API — no extra packages) ────────────
-  // TypeScript doesn't include Web Speech API types by default, so we use
-  // a local interface cast to avoid adding a @types package.
-  function toggleVoice() {
-    if (isRecording) {
+  // Stop any active recording if the component unmounts
+  useEffect(() => {
+    return () => {
       recognitionRef.current?.stop();
-      return;
-    }
+      if (mediaRecorderRef.current?.state === 'recording') {
+        mediaRecorderRef.current.stop();
+      }
+    };
+  }, []);
 
+  // Clear hover timers on unmount
+  useEffect(() => {
+    return () => { clearHoverTimer(); cancelDismiss(); };
+  }, []);
+
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  // VOICE TO TEXT — Web Speech API (Chrome/Edge) + Whisper fallback
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  //
+  // Strategy:
+  //   Chrome/Edge → native Web Speech API (free, real-time, no server call)
+  //   Firefox + all others → MediaRecorder → POST /api/ai/transcribe/ → whisper-1
+  //
+  // The mic button is ALWAYS shown. No browser gating, no alert(), no crash.
+
+  // Detect native Speech API support once (constant across the component lifetime)
+  const useNativeSpeech =
+    typeof window !== 'undefined' &&
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    ('SpeechRecognition' in window || 'webkitSpeechRecognition' in (window as any));
+
+  /** Start native (Chrome/Edge) speech recognition */
+  function startNativeSpeech() {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const win = window as any;
     const SpeechRecognitionCtor = win.SpeechRecognition ?? win.webkitSpeechRecognition;
-
-    if (!SpeechRecognitionCtor) {
-      // Browser doesn't support Speech API (e.g. Firefox without flag)
-      alert('Voice input is not supported in this browser. Try Chrome or Edge.');
-      return;
-    }
-
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const r: any = new SpeechRecognitionCtor();
     r.continuous     = true;
@@ -257,17 +532,291 @@ export function Editor({ initialContent, onSave, onTextChange, readOnly = false 
     setIsRecording(true);
   }
 
-  // Stop recording if the component unmounts
-  useEffect(() => {
-    return () => { recognitionRef.current?.stop(); };
-  }, []);
+  /**
+   * Start recording via MediaRecorder, then send to Whisper when stopped.
+   * Used as fallback for Firefox and any browser without the Web Speech API.
+   */
+  async function startWhisperRecording() {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const recorder = new MediaRecorder(stream);
+      audioChunksRef.current = [];
 
-  // ── Render ─────────────────────────────────────────────────────────────────
+      recorder.ondataavailable = (e) => {
+        if (e.data.size > 0) audioChunksRef.current.push(e.data);
+      };
+
+      recorder.onstop = async () => {
+        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+        // Release the microphone immediately after recording stops
+        stream.getTracks().forEach((t) => t.stop());
+        setIsRecording(false);
+
+        // Send to backend Whisper endpoint
+        const formData = new FormData();
+        formData.append('audio', audioBlob, 'recording.webm');
+        try {
+          const res = await fetch('/api/ai/transcribe/', {
+            method:  'POST',
+            headers: { Authorization: `Bearer ${getAccessToken()}` },
+            body:    formData,
+          });
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          const { text } = await res.json();
+          if (text) editor?.chain().focus().insertContent(text + ' ').run();
+        } catch {
+          toast.error('Transcription failed. Please try again.');
+        }
+      };
+
+      recorder.start();
+      mediaRecorderRef.current = recorder;
+      setIsRecording(true);
+    } catch {
+      toast.error('Microphone access denied.');
+    }
+  }
+
+  /** Toggle voice input — stops if recording, starts via the correct path if not */
+  function toggleVoice() {
+    if (isRecording) {
+      // Stop whichever recorder is currently active
+      if (useNativeSpeech) {
+        recognitionRef.current?.stop();
+      } else {
+        mediaRecorderRef.current?.stop();
+      }
+      setIsRecording(false);
+      return;
+    }
+
+    if (useNativeSpeech) {
+      startNativeSpeech();
+    } else {
+      startWhisperRecording();
+    }
+  }
+
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  // EVENT HANDLERS — mouse tracking, block handle, page link selection
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  function handleMouseMove(e: React.MouseEvent<HTMLDivElement>) {
+    if (!editor || readOnly) {
+      setBlockHandle(null);
+      return;
+    }
+
+    // Walk up from the hovered element to find
+    // a direct child of ProseMirror (= a block node)
+    let node = e.target as HTMLElement;
+    while (node && node.parentElement) {
+      if (node.parentElement.classList.contains('ProseMirror')) break;
+      node = node.parentElement;
+    }
+
+    // Not hovering inside editor content — return silently to preserve the handle
+    // while the mouse crosses the left padding area toward the buttons.
+    // onMouseLeave (with 100ms delay) is the sole mechanism that clears the handle.
+    if (!node?.parentElement?.classList.contains('ProseMirror')) {
+      return;
+    }
+
+    // Get position relative to the container div (position:relative)
+    const containerRect = e.currentTarget.getBoundingClientRect();
+    const nodeRect      = node.getBoundingClientRect();
+    const top = nodeRect.top - containerRect.top + nodeRect.height / 2 - 10;
+
+    // Get ProseMirror document position for insertContentAt
+    let nodePos: number;
+    try {
+      nodePos = editor.view.posAtDOM(node, 0);
+    } catch {
+      setBlockHandle(null);
+      return;
+    }
+
+    // Direct ProseMirror children for lists are <ul>/<ol>; closest('li') catches nested lists
+    const isListItem = node.tagName === 'UL' ||
+                       node.tagName === 'OL' ||
+                       node.tagName === 'LI' ||
+                       node.closest('li') !== null;
+
+    setBlockHandle({ top, nodePos, isListItem });
+  }
+
+  /** Drop handler — moves a dragged block to the drop position */
+  function handleBlockDrop(e: React.DragEvent<HTMLDivElement>) {
+    // Read our custom type — if absent this is not a block drag, let TipTap handle it
+    const fromPosStr = e.dataTransfer.getData('application/nexus-block');
+    if (!fromPosStr) return;
+
+    // It IS a block drag — prevent TipTap from inserting the position number as text
+    e.preventDefault();
+    e.stopPropagation();
+
+    const fromPos = parseInt(fromPosStr, 10);
+    if (isNaN(fromPos) || !editor) return;
+
+    const view     = editor.view;
+    const toCoords = view.posAtCoords({ left: e.clientX, top: e.clientY });
+    if (!toCoords) return;
+
+    const toPos = toCoords.pos;
+    if (fromPos === toPos) return;
+
+    const $from = view.state.doc.resolve(fromPos);
+    const node  = $from.node(1);
+    if (!node) return;
+
+    const tr = view.state.tr
+      .delete(fromPos, fromPos + node.nodeSize)
+      .insert(toPos > fromPos ? toPos - node.nodeSize : toPos, node);
+
+    view.dispatch(tr);
+  }
+
+  function handleBlockDragOver(e: React.DragEvent<HTMLDivElement>) {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+  }
+
+  /**
+   * handlePageLinkSelect — called when the user picks a page from the popup.
+   *
+   * Steps:
+   *   1. Delete the "[[query" text that triggered the popup (using stored range)
+   *   2. Insert a PageLinkNode chip with the selected page's id and title
+   *   3. Close the popup and clear the stored range
+   *   4. Record the connection in the backend (fire-and-forget with logged error)
+   *
+   * useCallback: editor and workspaceId/pageId are stable across re-renders
+   * triggered by the popup's own state (query, selectedIndex).
+   */
+  const handlePageLinkSelect = useCallback((page: Page) => {
+    if (!editor || !pageLinkRangeRef.current) return;
+
+    editor
+      .chain()
+      .focus()
+      // Delete the "[[query" text the user typed (range from the suggestion plugin)
+      .deleteRange(pageLinkRangeRef.current)
+      // Insert the inline node chip that renders as [[Page Title]]
+      .insertContent({
+        type: 'pageLink',
+        attrs: {
+          pageid:      page.id,
+          pagetitle:   page.title || 'Untitled',
+          workspaceid: workspaceId,
+        },
+      })
+      .run();
+
+    // Close popup and clear the stored range
+    setPageLinkOpen(false);
+    pageLinkRangeRef.current = null;
+
+    // Record the connection in the backend — fire-and-forget.
+    // The backend upserts so calling this twice for the same pair is safe.
+    // Log to console.warn so failures are visible during development.
+    relationsApi.createLink(pageId, page.id)
+      .catch((err) => console.warn('Failed to create page link:', err));
+  }, [editor, workspaceId, pageId]);
+
+  // ── Hover card helpers ───────────────────────────────────────────────────
+
+  function clearHoverTimer() {
+    if (hoverTimerRef.current) { clearTimeout(hoverTimerRef.current); hoverTimerRef.current = null; }
+  }
+  function startDismiss() {
+    dismissTimerRef.current = setTimeout(() => setHoveredPageId(null), 100);
+  }
+  function cancelDismiss() {
+    if (dismissTimerRef.current) { clearTimeout(dismissTimerRef.current); dismissTimerRef.current = null; }
+  }
+
+  function handleEditorMouseOver(e: React.MouseEvent<HTMLDivElement>) {
+    const chip = (e.target as HTMLElement).closest('.page-link-node') as HTMLElement | null;
+    if (!chip) return;
+    cancelDismiss();
+    if (hoverTimerRef.current) return; // already counting down
+    hoverTimerRef.current = setTimeout(() => {
+      const rect = chip.getBoundingClientRect();
+      const pid  = chip.getAttribute('data-page-id');
+      const wid  = chip.getAttribute('data-workspace-id');
+      if (pid && wid) {
+        setHoveredPageId(pid);
+        setHoveredChipRect(rect);
+        setHoveredWorkspaceId(wid);
+      }
+      hoverTimerRef.current = null;
+    }, 500);
+  }
+
+  function handleEditorMouseOut(e: React.MouseEvent<HTMLDivElement>) {
+    const chip        = (e.target as HTMLElement).closest('.page-link-node') as HTMLElement | null;
+    const relatedChip = (e.relatedTarget as HTMLElement | null)?.closest?.('.page-link-node');
+    if (chip && !relatedChip) {
+      clearHoverTimer();
+      startDismiss();
+    }
+  }
+
+  /**
+   * handleEditorClick — event delegation for clicking [[Page Title]] chips.
+   *
+   * Instead of attaching an onClick to every chip (which would require a
+   * ReactNodeViewRenderer and complicate the node definition), we use a single
+   * click handler on the editor container and walk up from the target.
+   * This is the same pattern browsers use for link handling.
+   */
+  function handleEditorClick(e: React.MouseEvent<HTMLDivElement>) {
+    const chip = (e.target as HTMLElement).closest('.page-link-node') as HTMLElement | null;
+    if (!chip) return; // normal click — not on a page link chip
+
+    const linkedPageId      = chip.getAttribute('data-page-id');
+    const linkedWorkspaceId = chip.getAttribute('data-workspace-id');
+    if (!linkedPageId || !linkedWorkspaceId) return;
+
+    // Navigate to the linked page
+    router.push(`/${linkedWorkspaceId}/${linkedPageId}`);
+  }
+
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  // RENDER — editor layout with toolbar, content, slash menu, page link popup
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
   if (!editor) return null;
 
   return (
-    <div ref={editorContainerRef} className="relative">
+    <div
+      className="relative pl-14"
+      onMouseMove={handleMouseMove}
+      onMouseLeave={() => { setTimeout(() => setBlockHandle(null), 1000); }}
+      onMouseOver={handleEditorMouseOver}
+      onMouseOut={handleEditorMouseOut}
+      onDrop={handleBlockDrop}
+      onDragOver={handleBlockDragOver}
+      onClick={handleEditorClick}
+    >
+      {/* ── Block handle — "+" button beside the hovered block ───────────── */}
+      {blockHandle && !readOnly && (
+        <AddBlockHandle
+          top={blockHandle.top}
+          nodePos={blockHandle.nodePos}
+          isListItem={blockHandle.isListItem}
+          editor={editor as TipTapEditor}
+          onMouseLeave={() => setBlockHandle(null)}
+          onAdd={() => {
+            const node = editor.state.doc.nodeAt(blockHandle.nodePos);
+            if (!node) return;
+            const insertPos = blockHandle.nodePos + node.nodeSize;
+            editor.chain().focus().insertContentAt(insertPos, { type: 'paragraph' }).run();
+            setBlockHandle(null);
+          }}
+        />
+      )}
+
       {/* ── Save status indicator ─────────────────────────────────────────── */}
       {status !== 'idle' && (
         <div
@@ -284,7 +833,7 @@ export function Editor({ initialContent, onSave, onTextChange, readOnly = false 
         </div>
       )}
 
-      {/* ── Inline format toolbar — shown when editor is focused ─────────── */}
+      {/* ── Inline format toolbar ─────────────────────────────────────────── */}
       <div className="mb-3 flex flex-wrap items-center gap-0.5 border-b border-neutral-800/60 pb-2">
         {/* Text style */}
         <BubbleButton
@@ -372,7 +921,7 @@ export function Editor({ initialContent, onSave, onTextChange, readOnly = false 
 
         <div className="mx-1 h-4 w-px bg-neutral-800" />
 
-        {/* Voice-to-text — Web Speech API */}
+        {/* Voice-to-text — Chrome/Edge: native; Firefox+others: Whisper */}
         <BubbleButton
           onClick={toggleVoice}
           isActive={isRecording}
@@ -385,24 +934,53 @@ export function Editor({ initialContent, onSave, onTextChange, readOnly = false 
       </div>
 
       {/* ── Editor content ────────────────────────────────────────────────── */}
-      <EditorContent editor={editor} />
+      <div className="tiptap-editor">
+        <EditorContent editor={editor} />
+      </div>
 
       {/* ── Slash command menu ────────────────────────────────────────────── */}
       {slashOpen && (
-        <SlashMenu
-          editor={editor}
-          query={slashQuery}
-          position={slashPos}
-          onClose={() => setSlashOpen(false)}
+        <SlashMenuPortal rect={slashRect}>
+          <SlashMenuList
+            ref={slashMenuRef}
+            items={slashItems}
+            command={(item) => {
+              slashCommand?.(item);
+              setSlashOpen(false);
+            }}
+          />
+        </SlashMenuPortal>
+      )}
+
+      {/* ── Page link popup — shown when user types [[ in the editor ──────── */}
+      {pageLinkOpen && (
+        <PageLinkPopup
+          ref={pageLinkPopupRef}
+          query={pageLinkQuery}
+          rect={pageLinkRect}
+          pages={workspacePages}
+          onSelect={handlePageLinkSelect}
+          onClose={() => setPageLinkOpen(false)}
+        />
+      )}
+
+      {/* ── Hover card — shown 500ms after hovering a [[Page Link]] chip ───── */}
+      {hoveredPageId && hoveredChipRect && hoveredWorkspaceId && (
+        <PageHoverCard
+          pageId={hoveredPageId}
+          workspaceId={hoveredWorkspaceId}
+          anchorRect={hoveredChipRect}
+          onMouseEnter={cancelDismiss}
+          onMouseLeave={startDismiss}
         />
       )}
     </div>
   );
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// BubbleButton — tiny toolbar button
-// ─────────────────────────────────────────────────────────────────────────────
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// TOOLBAR COMPONENTS — BubbleButton and ColorPickerButton
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 function BubbleButton({
   children,
@@ -431,10 +1009,6 @@ function BubbleButton({
   );
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// ColorPickerButton — Palette icon that opens a native <input type="color">
-// ─────────────────────────────────────────────────────────────────────────────
-
 function ColorPickerButton({
   onChange,
   onReset,
@@ -456,7 +1030,7 @@ function ColorPickerButton({
       >
         <Palette size={13} />
       </button>
-      {/* Right-click the palette button to reset color */}
+      {/* Right-click the palette button to reset color to default */}
       <input
         ref={inputRef}
         type="color"
