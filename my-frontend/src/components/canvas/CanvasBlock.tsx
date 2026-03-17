@@ -38,7 +38,7 @@
 import { useState, useEffect, useRef }  from 'react';
 import { useEditor, EditorContent }     from '@tiptap/react';
 import StarterKit                       from '@tiptap/starter-kit';
-import { GripVertical }                 from 'lucide-react';
+import { GripVertical, X, Eye, EyeOff } from 'lucide-react';
 import type { Block }                   from '@/types';
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -49,7 +49,9 @@ interface CanvasBlockProps {
   block:         Block;
   isSelected:    boolean;
   onSelect:      () => void;
-  onDragEnd:     (x: number, y: number) => void;
+  onDelete:            () => void;
+  onToggleVisibility:  () => void;
+  onDragEnd:           (x: number, y: number) => void;
   onResizeEnd:   (w: number, h: number) => void;
   onContentSave: (blockId: string, json: Record<string, unknown>) => void;
 }
@@ -77,6 +79,8 @@ export function CanvasBlock({
   block,
   isSelected,
   onSelect,
+  onDelete,
+  onToggleVisibility,
   onDragEnd,
   onResizeEnd,
   onContentSave,
@@ -177,22 +181,22 @@ export function CanvasBlock({
         top:      localY,
         width:    localW,
         zIndex:   block.canvas_z ?? 0,
+        ...(isSticky ? { background: '#422006', borderColor: '#92400e' } : {}),
       }}
       className={[
         'rounded-xl border shadow-md flex flex-col',
-        'min-w-[200px] min-h-[80px]',
-        isSticky
-          ? 'bg-yellow-900/40 border-yellow-700/50'
-          : 'bg-neutral-900 border-neutral-800',
-        isSelected && !isSticky
-          ? 'border-violet-500 shadow-violet-500/20 shadow-lg'
-          : '',
-        isSelected && isSticky
-          ? 'shadow-yellow-500/20 shadow-lg'
-          : '',
+        'min-w-50 min-h-20',
+        isSticky ? '' : 'bg-neutral-900 border-neutral-800',
+        isSelected && !isSticky ? 'border-violet-500 shadow-violet-500/20 shadow-lg' : '',
+        isSelected && isSticky  ? 'shadow-yellow-500/20 shadow-lg' : '',
       ].join(' ')}
       onClick={(e) => { e.stopPropagation(); onSelect(); }}
     >
+      {/* ── Amber top strip for sticky cards ───────────────────────────── */}
+      {isSticky && (
+        <div className="h-2 rounded-t-xl shrink-0" style={{ background: '#92400e' }} />
+      )}
+
       {/* ── Drag handle header ─────────────────────────────────────────── */}
       <div
         className={[
@@ -205,9 +209,15 @@ export function CanvasBlock({
         onPointerUp={onDragUp}
       >
         <GripVertical size={11} className="shrink-0 text-neutral-600" />
-        <span className="text-xs text-neutral-600 truncate capitalize">
-          {block.block_type.replace('_', ' ')}
-        </span>
+        {isSticky ? (
+          <span className="text-xs truncate" style={{ color: '#fef3c7' }}>
+            ● Sticky
+          </span>
+        ) : (
+          <span className="text-xs text-neutral-600 truncate">
+            ≡ Text
+          </span>
+        )}
       </div>
 
       {/* ── Content area ───────────────────────────────────────────────── */}
@@ -222,9 +232,32 @@ export function CanvasBlock({
           <ImageContent block={block} />
         )}
         {!['text', 'sticky', 'heading1', 'image'].includes(block.block_type) && (
-          <PlaceholderContent block={block} />
+          <PlaceholderContent blockType={block.block_type} />
         )}
       </div>
+
+      {/* ── Delete + visibility buttons (visible only when selected) ──── */}
+      {isSelected && (
+        <>
+          {/* Visibility toggle — show/hide in document view */}
+          <button
+            onClick={(e) => { e.stopPropagation(); onToggleVisibility(); }}
+            className="absolute top-2 right-8 flex h-5 w-5 items-center justify-center rounded text-neutral-600 hover:bg-neutral-800 hover:text-neutral-300 transition-colors z-10"
+            title={block.doc_visible ? 'Hide in document' : 'Show in document'}
+          >
+            {block.doc_visible ? <EyeOff size={12} /> : <Eye size={12} />}
+          </button>
+
+          {/* Delete */}
+          <button
+            onClick={(e) => { e.stopPropagation(); onDelete(); }}
+            className="absolute top-2 right-2 flex h-5 w-5 items-center justify-center rounded text-neutral-600 hover:bg-red-950/30 hover:text-red-400 transition-colors z-10"
+            title="Delete block"
+          >
+            <X size={12} />
+          </button>
+        </>
+      )}
 
       {/* ── Resize handle (visible only when selected) ─────────────────── */}
       {isSelected && (
@@ -283,7 +316,7 @@ function TextContent({ block, onContentSave }: TextContentProps) {
   return (
     // Stop pointer events so typing doesn't trigger drag or canvas interactions
     <div
-      className="canvas-mini-editor text-sm text-neutral-200 [&_.ProseMirror]:outline-none [&_.ProseMirror]:min-h-[2rem]"
+      className="canvas-mini-editor text-sm text-neutral-200 [&_.ProseMirror]:outline-none [&_.ProseMirror]:min-h-8"
       onPointerDown={(e) => e.stopPropagation()}
       onClick={(e) => e.stopPropagation()}
     >
@@ -297,7 +330,7 @@ function TextContent({ block, onContentSave }: TextContentProps) {
 function HeadingContent({ block }: { block: Block }) {
   const text = extractTipTapText(block.content?.json ?? {}) || 'Heading';
   return (
-    <h2 className="text-xl font-bold text-neutral-100 leading-snug break-words">
+    <h2 className="text-xl font-bold text-neutral-100 leading-snug wrap-break-word">
       {text}
     </h2>
   );
@@ -324,10 +357,12 @@ function ImageContent({ block }: { block: Block }) {
 
 // ── PlaceholderContent — unsupported block type ───────────────────────────────
 
-function PlaceholderContent({ block }: { block: Block }) {
+function PlaceholderContent({ blockType }: { blockType: string }) {
   return (
-    <p className="text-xs text-neutral-600 italic">
-      [{block.block_type.replace('_', ' ')} — switch to document mode to edit]
-    </p>
+    <div className="p-3">
+      <p className="text-xs text-neutral-500 italic">
+        [{blockType.replace('_', ' ')} — switch to document mode to edit]
+      </p>
+    </div>
   );
 }

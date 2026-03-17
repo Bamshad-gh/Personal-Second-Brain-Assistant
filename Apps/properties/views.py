@@ -28,8 +28,77 @@ from django.shortcuts import get_object_or_404
 
 from Apps.workspaces.models import Workspace
 from Apps.pages.models import Page
-from .models import PropertyDefinition, PropertyValue
-from .serializers import PropertyDefinitionSerializer, PropertyValueSerializer
+from .models import CustomPageType, PropertyDefinition, PropertyValue
+from .serializers import CustomPageTypeSerializer, PropertyDefinitionSerializer, PropertyValueSerializer
+
+
+# ── Custom Page Types ─────────────────────────────────────────────────────────
+
+class CustomPageTypeListCreateView(APIView):
+    """
+    GET  /api/properties/custom-types/?workspace=<id>
+    POST /api/properties/custom-types/
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        qs = CustomPageType.objects.filter(
+            workspace__owner=request.user,
+            is_deleted=False,
+        ).select_related('workspace')
+
+        workspace_id = request.query_params.get('workspace')
+        if workspace_id:
+            qs = qs.filter(workspace_id=workspace_id)
+
+        serializer = CustomPageTypeSerializer(qs, many=True)
+        return Response(serializer.data)
+
+    def post(self, request):
+        workspace_id = request.data.get('workspace')
+        get_object_or_404(Workspace, pk=workspace_id, owner=request.user)
+
+        serializer = CustomPageTypeSerializer(data=request.data)
+        if serializer.is_valid():
+            serializer.save()
+            return Response(serializer.data, status=status.HTTP_201_CREATED)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+class CustomPageTypeDetailView(APIView):
+    """
+    GET    /api/properties/custom-types/<pk>/
+    PATCH  /api/properties/custom-types/<pk>/
+    DELETE /api/properties/custom-types/<pk>/
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, pk):
+        obj = get_object_or_404(
+            CustomPageType, pk=pk,
+            workspace__owner=request.user, is_deleted=False,
+        )
+        return Response(CustomPageTypeSerializer(obj).data)
+
+    def patch(self, request, pk):
+        obj = get_object_or_404(
+            CustomPageType, pk=pk,
+            workspace__owner=request.user, is_deleted=False,
+        )
+        serializer = CustomPageTypeSerializer(obj, data=request.data, partial=True)
+        if serializer.is_valid():
+            serializer.save()
+            return Response(serializer.data)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    def delete(self, request, pk):
+        obj = get_object_or_404(
+            CustomPageType, pk=pk,
+            workspace__owner=request.user, is_deleted=False,
+        )
+        obj.is_deleted = True
+        obj.save(update_fields=['is_deleted'])
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
 
 # ── Definitions ───────────────────────────────────────────────────────────────

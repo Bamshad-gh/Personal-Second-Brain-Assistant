@@ -647,31 +647,58 @@ export function Editor({
 
   /** Drop handler — moves a dragged block to the drop position */
   function handleBlockDrop(e: React.DragEvent<HTMLDivElement>) {
-    // Read our custom type — if absent this is not a block drag, let TipTap handle it
     const fromPosStr = e.dataTransfer.getData('application/nexus-block');
     if (!fromPosStr) return;
 
-    // It IS a block drag — prevent TipTap from inserting the position number as text
     e.preventDefault();
     e.stopPropagation();
 
-    const fromPos = parseInt(fromPosStr, 10);
-    if (isNaN(fromPos) || !editor) return;
+    if (!editor) return;
 
-    const view     = editor.view;
+    const fromPos = parseInt(fromPosStr, 10);
+    if (isNaN(fromPos)) return;
+
+    const view  = editor.view;
+    const state = view.state;
+
+    // Get the drop target position
     const toCoords = view.posAtCoords({ left: e.clientX, top: e.clientY });
     if (!toCoords) return;
 
-    const toPos = toCoords.pos;
-    if (fromPos === toPos) return;
-
-    const $from = view.state.doc.resolve(fromPos);
-    const node  = $from.node(1);
+    // Resolve the FROM position to get the top-level block
+    const $from     = state.doc.resolve(fromPos);
+    // depth 0 = doc, depth 1 = top-level block
+    const blockStart = $from.before(1);
+    const blockEnd   = $from.after(1);
+    const node       = state.doc.nodeAt(blockStart);
     if (!node) return;
 
-    const tr = view.state.tr
-      .delete(fromPos, fromPos + node.nodeSize)
-      .insert(toPos > fromPos ? toPos - node.nodeSize : toPos, node);
+    // Resolve the TO position to get the target top-level block boundary
+    const $to       = state.doc.resolve(toCoords.pos);
+    let insertPos   = $to.before(1);
+
+    // If dropping below the midpoint of the target block, insert after it
+    const targetDOM = view.nodeDOM($to.before(1));
+    if (targetDOM instanceof HTMLElement) {
+      const rect = targetDOM.getBoundingClientRect();
+      const midY = rect.top + rect.height / 2;
+      if (e.clientY > midY) {
+        insertPos = $to.after(1);
+      }
+    }
+
+    // Do not move if source and target are the same block
+    if (insertPos === blockStart || insertPos === blockEnd) return;
+
+    // Build transaction: delete from old position, insert at new position.
+    // Adjust insert position if it comes after the deleted block.
+    const adjustedInsert = insertPos > blockEnd
+      ? insertPos - node.nodeSize
+      : insertPos;
+
+    const tr = state.tr
+      .delete(blockStart, blockEnd)
+      .insert(adjustedInsert, node);
 
     view.dispatch(tr);
   }

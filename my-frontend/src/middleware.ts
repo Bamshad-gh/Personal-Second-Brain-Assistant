@@ -14,9 +14,11 @@
  *   view (process_request). The difference: this runs at the network
  *   edge, before the request even reaches your server.
  *
- * Route groups:
- *   (app)  routes = /workspace/*, /[workspaceId]/* — require authentication
- *   (auth) routes = /login, /register             — redirect if already logged in
+ * Route classification:
+ *   isAuthOnly  — /login, /register: redirect to /workspace if already logged in
+ *   isPublic    — /_next/*, /api/*, static files: always pass through
+ *   isProtected — everything else (including dynamic /:workspaceId/:pageId):
+ *                 redirect to /login if no session
  *
  * How to expand:
  *   - Add role-based access: check a role cookie and redirect non-admins
@@ -44,12 +46,6 @@ const SESSION_FLAG_COOKIE = 'has_session';
 // Route matchers
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** Routes that require authentication. If no session → redirect to /login */
-const PROTECTED_PATHS = ['/workspace', '/dashboard'];
-
-/** Routes only for guests. If session exists → redirect to / */
-const AUTH_ONLY_PATHS = ['/login', '/register'];
-
 /** Returns true if the request path starts with any of the given prefixes */
 function matchesAny(pathname: string, paths: string[]): boolean {
   return paths.some((path) => pathname.startsWith(path));
@@ -65,19 +61,26 @@ export function middleware(request: NextRequest): NextResponse {
   // Read the session flag cookie
   const hasSession = request.cookies.get(SESSION_FLAG_COOKIE)?.value === 'true';
 
-  // ── Protected routes: require session ────────────────────────────────────
-  if (matchesAny(pathname, PROTECTED_PATHS) && !hasSession) {
-    // Build the redirect URL: /login?from=/workspace/abc
-    // The 'from' param lets the login page redirect back after login
+  // ── Classify the request path ─────────────────────────────────────────────
+  // Auth-only: pages that logged-in users should not see
+  const isAuthOnly = matchesAny(pathname, ['/login', '/register']);
+  // Public: Next.js internals, backend API routes, and static files
+  const isPublic   = pathname.startsWith('/_next') ||
+                     pathname.startsWith('/api')    ||
+                     pathname.includes('.');
+  // Protected: everything else — covers dynamic routes like /:workspaceId/:pageId
+  const isProtected = !isAuthOnly && !isPublic;
+
+  // ── Auth-only routes: redirect logged-in users to the app ────────────────
+  if (isAuthOnly && hasSession) {
+    return NextResponse.redirect(new URL('/workspace', request.url));
+  }
+
+  // ── Protected routes: redirect guests to login ───────────────────────────
+  if (isProtected && !hasSession) {
     const loginUrl = new URL('/login', request.url);
     loginUrl.searchParams.set('from', pathname);
     return NextResponse.redirect(loginUrl);
-  }
-
-  // ── Auth-only routes: skip if already logged in ───────────────────────────
-  if (matchesAny(pathname, AUTH_ONLY_PATHS) && hasSession) {
-    // Already logged in — send to the app home (will redirect to workspace)
-    return NextResponse.redirect(new URL('/', request.url));
   }
 
   // ── All other paths: pass through unchanged ───────────────────────────────

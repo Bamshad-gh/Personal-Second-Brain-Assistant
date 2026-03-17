@@ -222,6 +222,7 @@ export interface Page {
   is_pinned: boolean;
   is_locked: boolean;
   updated_at: string;
+  custom_page_type?: string | null;  // CustomPageType UUID
   // Detail-only / write-response fields:
   workspace?: string;      // workspace UUID
   created_by?: string;     // user UUID
@@ -255,6 +256,8 @@ export interface Block {
   canvas_w: number | null;
   canvas_h: number | null;
   canvas_z: number | null;
+  doc_visible: boolean;
+  canvas_visible: boolean;
   enc_tier: EncTier;
   ai_consent: AiConsent;
   is_locked: boolean;
@@ -325,6 +328,7 @@ export interface CreatePagePayload {
   page_type?: PageType;
   view_mode?: ViewMode;
   icon?: string;
+  custom_page_type?: string | null;
 }
 
 // BUG FIX: removed enc_tier and ai_consent (not in PageUpdateSerializer).
@@ -337,6 +341,7 @@ export interface UpdatePagePayload {
   parent?: string | null;
   page_type?: PageType;
   view_mode?: ViewMode;
+  custom_page_type?: string | null;
 }
 
 export interface CreateBlockPayload {
@@ -350,6 +355,8 @@ export interface CreateBlockPayload {
   canvas_w?: number | null;
   canvas_h?: number | null;
   canvas_z?: number | null;
+  doc_visible?: boolean;
+  canvas_visible?: boolean;
 }
 
 // BUG FIX: removed block_type (BlockUpdateSerializer does not accept it).
@@ -363,6 +370,8 @@ export interface UpdateBlockPayload {
   canvas_w?: number | null;
   canvas_h?: number | null;
   canvas_z?: number | null;
+  doc_visible?: boolean;
+  canvas_visible?: boolean;
 }
 
 export interface ReorderBlocksPayload {
@@ -494,6 +503,20 @@ export interface PropertyValue {
   value_date:   string | null; // ISO 8601 datetime string
   value_bool:   boolean | null;
   value_json:   unknown | null; // select options (string[]), relations, etc.
+}
+
+/**
+ * CustomPageType — mirrors properties.CustomPageType model.
+ * A user-defined page category with its own scoped PropertyDefinitions.
+ *
+ * Returned by: GET /api/properties/custom-types/?workspace=<id>
+ */
+export interface CustomPageType {
+  id:          string;
+  workspace:   string;
+  name:        string;
+  icon:        string;
+  description: string;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

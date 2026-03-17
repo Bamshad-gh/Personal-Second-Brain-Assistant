@@ -86,6 +86,10 @@ class Block(EncryptableMixin, AIPermissionMixin, BaseModel):
     canvas_h = models.FloatField(null=True, blank=True)
     canvas_z = models.IntegerField(default=0)
 
+    # ── Visibility ────────────────────────────────────────────
+    doc_visible    = models.BooleanField(default=True)
+    canvas_visible = models.BooleanField(default=False)
+
     class Meta:
         ordering = ['order']
         indexes  = [

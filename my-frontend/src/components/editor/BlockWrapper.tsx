@@ -66,9 +66,9 @@ export function AddBlockHandle({
       style={{
         position:      'absolute',
         top:           top - 4,
-        left:          -7,                    // matches pl-14 (72px) gutter in Editor
+        left:          -32,                    // matches pl-14 (72px) gutter in Editor
         height:        28,
-        width:         'calc(100% + 7px)',
+        width:         'calc(100% + 32px)',
         display:       'flex',
         alignItems:    'center',
         gap:           2,

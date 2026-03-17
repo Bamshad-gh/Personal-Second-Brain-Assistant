@@ -39,6 +39,7 @@ import type {
   Connection,
   BacklinkPage,
   PagePreview,
+  CustomPageType,
   PropertyDefinition,
   PropertyValue,
   AuthTokens,
@@ -629,6 +630,49 @@ export const propertyApi = {
       payload,
     );
     return data;
+  },
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CUSTOM PAGE TYPES API — user-defined page categories (Feature 5)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * customPageTypeApi — mirrors Django's /api/properties/custom-types/ endpoints.
+ *
+ * Endpoint map:
+ *   GET    /api/properties/custom-types/?workspace=<id>  → list types
+ *   POST   /api/properties/custom-types/                 → create type
+ *   PATCH  /api/properties/custom-types/<id>/            → update type
+ *   DELETE /api/properties/custom-types/<id>/            → soft delete
+ */
+export const customPageTypeApi = {
+  list: async (workspaceId: string): Promise<CustomPageType[]> => {
+    const { data } = await axiosInstance.get<CustomPageType[]>(
+      '/api/properties/custom-types/',
+      { params: { workspace: workspaceId } },
+    );
+    return data;
+  },
+
+  create: async (payload: Omit<CustomPageType, 'id'>): Promise<CustomPageType> => {
+    const { data } = await axiosInstance.post<CustomPageType>(
+      '/api/properties/custom-types/',
+      payload,
+    );
+    return data;
+  },
+
+  update: async (id: string, payload: Partial<CustomPageType>): Promise<CustomPageType> => {
+    const { data } = await axiosInstance.patch<CustomPageType>(
+      `/api/properties/custom-types/${id}/`,
+      payload,
+    );
+    return data;
+  },
+
+  delete: async (id: string): Promise<void> => {
+    await axiosInstance.delete(`/api/properties/custom-types/${id}/`);
   },
 };
 

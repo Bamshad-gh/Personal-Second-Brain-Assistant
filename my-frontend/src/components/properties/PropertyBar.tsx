@@ -47,12 +47,13 @@ import type { PropType, SelectOption } from '@/types';
 // ─────────────────────────────────────────────────────────────────────────────
 
 interface PropertyBarProps {
-  workspaceId: string;
-  pageId:      string;
-  readOnly?:   boolean;
+  workspaceId:      string;
+  pageId:           string;
+  readOnly?:        boolean;
+  customPageTypeId?: string | null;
 }
 
-const PROP_TYPE_OPTIONS: Array<{ type: PropType; label: string; icon: string }> = [
+export const PROP_TYPE_OPTIONS: Array<{ type: PropType; label: string; icon: string }> = [
   { type: 'text',     label: 'Text',         icon: 'T'  },
   { type: 'number',   label: 'Number',       icon: '#'  },
   { type: 'date',     label: 'Date',         icon: '📅' },
@@ -66,7 +67,7 @@ const PROP_TYPE_OPTIONS: Array<{ type: PropType; label: string; icon: string }> 
 ];
 
 // Cycles automatically as options are added: index % 6
-const OPTION_COLORS = ['#3b82f6', '#22c55e', '#f59e0b', '#ef4444', '#a855f7', '#06b6d4'];
+export const OPTION_COLORS = ['#3b82f6', '#22c55e', '#f59e0b', '#ef4444', '#a855f7', '#06b6d4'];
 
 function propTypeIcon(type: PropType): string {
   return PROP_TYPE_OPTIONS.find((o) => o.type === type)?.icon ?? '·';
@@ -85,7 +86,7 @@ interface OptionsBuilderProps {
   onChange: (opts: SelectOption[]) => void;
 }
 
-function OptionsBuilder({ options, onChange }: OptionsBuilderProps) {
+export function OptionsBuilder({ options, onChange }: OptionsBuilderProps) {
   const [input, setInput] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -152,7 +153,7 @@ function OptionsBuilder({ options, onChange }: OptionsBuilderProps) {
 // PropertyBar
 // ─────────────────────────────────────────────────────────────────────────────
 
-export function PropertyBar({ workspaceId, pageId, readOnly = false }: PropertyBarProps) {
+export function PropertyBar({ workspaceId, pageId, readOnly = false, customPageTypeId }: PropertyBarProps) {
   // ── Data ────────────────────────────────────────────────────────────────
   const { data: definitions = [] } = usePropertyDefinitions(workspaceId);
   const { data: values = [] }      = usePropertyValues(pageId);
@@ -160,6 +161,19 @@ export function PropertyBar({ workspaceId, pageId, readOnly = false }: PropertyB
   const createDef = useCreateDefinition(workspaceId);
   const updateDef = useUpdateDefinition(workspaceId);
   const deleteDef = useDeleteDefinition(workspaceId);
+
+  // ── Filter definitions to those relevant to this page's type ────────────
+  // Show a definition when:
+  //   - it is marked global (appears on every page regardless of type), OR
+  //   - a custom type is set and the definition is scoped to that type, OR
+  //   - no custom type is set and the definition is not scoped to any type
+  const visibleDefinitions = definitions.filter(
+    (def) =>
+      def.is_global ||
+      (customPageTypeId
+        ? def.custom_page_type === customPageTypeId
+        : !def.custom_page_type),
+  );
 
   // ── "Add property" popover state ────────────────────────────────────────
   const [addOpen,    setAddOpen]    = useState(false);
@@ -184,11 +198,12 @@ export function PropertyBar({ workspaceId, pageId, readOnly = false }: PropertyB
     if (!trimmed || !pickedType) return;
     createDef.mutate(
       {
-        workspace: workspaceId,
-        name:      trimmed,
-        prop_type: pickedType,
-        options:   newOptions,          // ← includes options built by OptionsBuilder
-        order:     definitions.length,
+        workspace:        workspaceId,
+        name:             trimmed,
+        prop_type:        pickedType,
+        options:          newOptions,
+        order:            visibleDefinitions.length,
+        custom_page_type: customPageTypeId ?? null,
       },
       { onSuccess: closeAddPopover },
     );
@@ -216,13 +231,13 @@ export function PropertyBar({ workspaceId, pageId, readOnly = false }: PropertyB
 
   // ── Render ───────────────────────────────────────────────────────────────
 
-  if (definitions.length === 0 && readOnly) return null;
+  if (visibleDefinitions.length === 0 && readOnly) return null;
 
   return (
     <div className="mb-6 flex flex-wrap items-center gap-2">
 
       {/* ── One pill per definition ─────────────────────────────────────── */}
-      {definitions.map((def) => {
+      {visibleDefinitions.map((def) => {
         const val = values.find((v) => v.definition === def.id);
 
         const menuItems = [

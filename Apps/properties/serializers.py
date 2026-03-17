@@ -1,5 +1,12 @@
 from rest_framework import serializers
-from .models import PropertyDefinition, PropertyValue
+from .models import CustomPageType, PropertyDefinition, PropertyValue
+
+
+class CustomPageTypeSerializer(serializers.ModelSerializer):
+    class Meta:
+        model  = CustomPageType
+        fields = ['id', 'workspace', 'name', 'icon', 'description']
+        read_only_fields = ['id']
 
 
 class PropertyDefinitionSerializer(serializers.ModelSerializer):

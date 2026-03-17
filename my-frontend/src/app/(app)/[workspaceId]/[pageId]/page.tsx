@@ -38,15 +38,16 @@
 
 import { useParams, useRouter }                       from 'next/navigation';
 import Link                                           from 'next/link';
-import { useState, useCallback, useRef, useEffect }   from 'react';
+import { useState, useEffect, useCallback, useRef }   from 'react';
 import { ArrowLeft, Lock, Sparkles, Link2,
          MoreHorizontal, Pencil, Files, Copy, Trash2,
-         LayoutDashboard, FileText }                  from 'lucide-react';
+         LayoutDashboard, FileText, Layers }           from 'lucide-react';
 import toast                                          from 'react-hot-toast';
 import { useQuery, useMutation, useQueryClient }      from '@tanstack/react-query';
 import { pageApi }                                    from '@/lib/api';
 import { useBlocks, useCreateBlock, useUpdateBlock }  from '@/hooks/useBlocks';
 import { useUpdatePage, useDeletePage, pageKeys }     from '@/hooks/usePages';
+import { useCustomPageTypes }                         from '@/hooks/useCustomPageTypes';
 import { useAppStore }                                from '@/lib/store';
 import { Editor }                                     from '@/components/editor/Editor';
 import { EditorErrorBoundary }                        from '@/components/editor/EditorErrorBoundary';
@@ -84,6 +85,9 @@ export default function PageEditorRoute() {
   const updatePage  = useUpdatePage(workspaceId);
   const deletePage  = useDeletePage(workspaceId);
 
+  // ── Custom page types (for type picker + badge) ──────────────────────────
+  const { data: customTypes = [] } = useCustomPageTypes(workspaceId);
+
   // ── Duplicate mutation ───────────────────────────────────────────────────
   const queryClient   = useQueryClient();
   const duplicatePage = useMutation({
@@ -102,9 +106,16 @@ export default function PageEditorRoute() {
   const titleSaveTimer              = useRef<ReturnType<typeof setTimeout> | null>(null);
   const titleInputRef               = useRef<HTMLInputElement>(null);
 
+  // Sync title when a different page loads.
+  const [lastLoadedPageId, setLastLoadedPageId] = useState<string | null>(null);
+  /* eslint-disable react-hooks/set-state-in-effect */
   useEffect(() => {
-    if (page?.title !== undefined) setTitle(page.title);
-  }, [page?.title]);
+    if (page?.id && page.id !== lastLoadedPageId) {
+      setLastLoadedPageId(page.id);
+      if (page.title !== undefined) setTitle(page.title);
+    }
+  }, [page?.id, page?.title]); // eslint-disable-line react-hooks/exhaustive-deps
+  /* eslint-enable react-hooks/set-state-in-effect */
 
   function handleTitleChange(e: React.ChangeEvent<HTMLInputElement>) {
     setTitle(e.target.value);
@@ -124,11 +135,18 @@ export default function PageEditorRoute() {
   // When true, the dropdown shows a delete confirmation instead of normal items.
   const [confirmingDelete, setConfirmingDelete] = useState(false);
 
+  // ── Change type inline picker ────────────────────────────────────────────
+  const [changingType, setChangingType] = useState(false);
+
   // ── Track editor plain text (for AI context — document mode only) ────────
   const [editorText, setEditorText] = useState('');
 
   // ── Find the main content block (document mode autosave) ────────────────
-  const contentBlock = blocks.find((b) => b.block_type === 'text');
+  // canvas_x === null guards against canvas text blocks contaminating the document editor
+  const contentBlock = blocks.find((b) => b.block_type === 'text' && b.canvas_x === null);
+
+  // ── Canvas blocks — only blocks explicitly pinned to the canvas ───────────
+  const canvasBlocks = blocks.filter((b) => b.canvas_visible);
 
   // ── Autosave callback (document mode) ───────────────────────────────────
   const handleSave = useCallback(
@@ -164,9 +182,9 @@ export default function PageEditorRoute() {
       <div className="mx-auto max-w-3xl px-6 py-12 animate-fade-in">
         <div className="mb-8 h-10 w-2/3 animate-shimmer rounded-xl" />
         <div className="space-y-3">
-          {[...Array(8)].map((_, i) => (
+          {[75, 90, 65, 85, 70, 95, 60, 80].map((w, i) => (
             <div key={i} className="animate-shimmer rounded-lg"
-              style={{ height: '1.25rem', width: `${60 + Math.random() * 35}%` }} />
+              style={{ height: '1.25rem', width: `${w}%` }} />
           ))}
         </div>
       </div>
@@ -188,6 +206,9 @@ export default function PageEditorRoute() {
 
   // ── Derived: are we in canvas mode? ─────────────────────────────────────
   const isCanvas = page.view_mode === 'canvas';
+
+  // ── Derived: current custom type (for badge + type picker) ───────────────
+  const currentType = customTypes.find((t) => t.id === page.custom_page_type) ?? null;
 
   // ── Page options dropdown items ──────────────────────────────────────────
   //
@@ -235,6 +256,11 @@ export default function PageEditorRoute() {
             navigator.clipboard.writeText(window.location.href);
             toast.success('Link copied');
           },
+        },
+        {
+          label:   'Change type',
+          icon:    <Layers size={13} />,
+          onClick: () => setChangingType((v) => !v),
         },
         {
           label:   'Delete',
@@ -344,25 +370,62 @@ export default function PageEditorRoute() {
           {/* Icon + title */}
           <div className="mb-6">
             <div className="mb-3 text-4xl leading-none select-none">{page.icon || '📄'}</div>
-            <input
-              ref={titleInputRef}
-              value={title}
-              onChange={handleTitleChange}
-              placeholder="Untitled"
-              disabled={page.is_locked}
-              className={[
-                'w-full bg-transparent text-3xl font-bold text-neutral-100 placeholder-neutral-700',
-                'border-none outline-none ring-0',
-                'disabled:cursor-not-allowed disabled:opacity-50',
-              ].join(' ')}
-              aria-label="Page title"
-            />
+
+            {/* Title row — input + optional type badge */}
+            <div className="flex items-center gap-2 flex-wrap">
+              <input
+                ref={titleInputRef}
+                value={title}
+                onChange={handleTitleChange}
+                placeholder="Untitled"
+                disabled={page.is_locked}
+                className={[
+                  'flex-1 min-w-0 bg-transparent text-3xl font-bold text-neutral-100 placeholder-neutral-700',
+                  'border-none outline-none ring-0',
+                  'disabled:cursor-not-allowed disabled:opacity-50',
+                ].join(' ')}
+                aria-label="Page title"
+              />
+              {currentType && (
+                <span className="inline-flex items-center gap-1 rounded-full bg-neutral-800 px-2 py-0.5 text-xs text-neutral-400 shrink-0">
+                  {currentType.icon || '📄'} {currentType.name}
+                </span>
+              )}
+            </div>
+
+            {/* Type picker — shown when "Change type" is toggled */}
+            {changingType && (
+              <div className="mt-2 mb-3 flex flex-wrap gap-1.5 rounded-lg border border-neutral-800 bg-neutral-900 p-2 animate-fade-in">
+                <button
+                  onClick={() => {
+                    updatePage.mutate({ id: pageId, payload: { custom_page_type: null } });
+                    setChangingType(false);
+                  }}
+                  className="flex items-center gap-1 rounded-full bg-neutral-800 px-2 py-1 text-xs text-neutral-300 hover:bg-neutral-700 transition-colors"
+                >
+                  📄 Note
+                </button>
+                {customTypes.map((t) => (
+                  <button
+                    key={t.id}
+                    onClick={() => {
+                      updatePage.mutate({ id: pageId, payload: { custom_page_type: t.id } });
+                      setChangingType(false);
+                    }}
+                    className="flex items-center gap-1 rounded-full bg-neutral-800 px-2 py-1 text-xs text-neutral-300 hover:bg-neutral-700 transition-colors"
+                  >
+                    {t.icon || '📄'} {t.name}
+                  </button>
+                ))}
+              </div>
+            )}
 
             {/* Properties row — typed metadata fields below the title */}
             <PropertyBar
               workspaceId={workspaceId}
               pageId={pageId}
               readOnly={page.is_locked}
+              customPageTypeId={page.custom_page_type ?? null}
             />
           </div>
 
@@ -374,7 +437,7 @@ export default function PageEditorRoute() {
           // ── Canvas mode: fills remaining flex height, full width ────────
           <div className="flex-1 min-h-0">
             <CanvasView
-              blocks={blocks}
+              blocks={canvasBlocks}
               pageId={pageId}
               workspaceId={workspaceId}
               readOnly={page.is_locked}
@@ -403,6 +466,29 @@ export default function PageEditorRoute() {
             {/* Backlinks panel — shows pages that [[link]] to this page.
                 Renders nothing when there are no backlinks. */}
             <BacklinksPanel pageId={pageId} workspaceId={workspaceId} />
+
+            {/* Shared canvas blocks — canvas blocks also marked doc_visible */}
+            {blocks.filter((b) => b.canvas_visible && b.doc_visible).length > 0 && (
+              <div className="mt-8 border-t border-neutral-800 pt-6">
+                <p className="text-xs font-semibold uppercase tracking-widest text-neutral-600 mb-3">
+                  Canvas blocks
+                </p>
+                {blocks
+                  .filter((b) => b.canvas_visible && b.doc_visible)
+                  .map((b) => (
+                    <div
+                      key={b.id}
+                      className="mb-3 rounded-lg border border-neutral-800 bg-neutral-900/50 p-3 text-sm text-neutral-400"
+                    >
+                      {b.block_type === 'sticky' || b.block_type === 'text'
+                        ? <p>{JSON.stringify(b.content).slice(0, 100)}…</p>
+                        : <p className="italic">[{b.block_type} canvas block]</p>
+                      }
+                    </div>
+                  ))
+                }
+              </div>
+            )}
           </div>
 
         )}

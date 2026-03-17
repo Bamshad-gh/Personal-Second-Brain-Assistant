@@ -18,10 +18,11 @@
 - **Phase 2 — Feature 2 (Property System):** typed metadata fields (text, number, date, checkbox, select, multi-select, URL, email, phone, currency) below the page title
 - **Phase 2 — Feature 3 (Hover Cards):** hover a `[[Page Link]]` chip for 500ms → popup card with title, type badge, content preview, backlink count, Open button
 - **Phase 2 — Feature 4 (Canvas Mode):** toggle button in page header switches between document editor and infinite 2D canvas; blocks freely positioned with drag, resize, and Ctrl+scroll zoom
+- **Phase 2 — Feature 5 (Custom Page Types):** user-defined page categories (e.g. "Client", "Project") with scoped PropertyDefinitions; sidebar Layers button → CustomPageTypeManager; New page dropdown includes custom types; PropertyBar filters definitions by type
 
 ### Not working / known limitations
 - Image uploads stored as base64 — no Django media storage yet (Feature 4)
-- Page search / command palette not built yet (Feature 5)
+- Page search / command palette not built yet
 - Block drag-to-reorder not implemented
 - Backlinks are append-only — deleting a `[[link]]` chip from the editor does not remove the `Connection` row from the backend
 - Voice transcription (`/api/ai/transcribe/`) backend endpoint may not exist yet
@@ -81,7 +82,10 @@ my-frontend/src/
 │   │                                  PageLinkNode — inline atom node [[Title]] chip
 │   │                                  PageLinkSuggestion — [[ trigger via @tiptap/suggestion
 │   ├── sidebar/
-│   │   ├── Sidebar.tsx               Main sidebar: workspace header, page tree, user footer
+│   │   ├── Sidebar.tsx               Main sidebar: workspace header, new-page dropdown
+│   │   │                             (blank + one item per custom type), page tree, user footer.
+│   │   │                             Footer: Settings · Layers (CustomPageTypeManager toggle) ·
+│   │   │                             ThemeToggle · Logout
 │   │   ├── WorkspaceSwitcher.tsx     Dropdown to switch workspaces (shows color dot + name)
 │   │   ├── PageTree.tsx              Recursive page list with expand/collapse
 │   │   └── SidebarItem.tsx           Single page row — active highlight, rename, delete
@@ -98,23 +102,39 @@ my-frontend/src/
 │   │   └── CanvasToolbar.tsx         Fixed bottom-centre toolbar: Add Text, Add Sticky,
 │   │                                 Zoom −/%, Zoom +, ← Document
 │   ├── properties/                   [Phase 2 — Feature 2] Typed metadata fields
-│   │   ├── PropertyBar.tsx           Pill row of property fields below the page title
+│   │   ├── PropertyBar.tsx           Pill row of property fields below the page title.
+│   │   │                             Accepts customPageTypeId prop — filters definitions to
+│   │   │                             globals + definitions scoped to that type only.
 │   │   └── PropertyValue.tsx         Per-type value display + inline editor (select, date, etc.)
+│   ├── workspace/                    [Phase 2 — Feature 5] Custom page type management
+│   │   └── CustomPageTypeManager.tsx Popover panel: list / create / rename / delete
+│   │                                 CustomPageTypes for the current workspace.
+│   │                                 Triggered by the Layers button in Sidebar footer.
 │   └── ui/
 │       ├── Button.tsx                Base button (variant: primary / ghost / danger)
 │       ├── Input.tsx                 Base input with label + error state
+│       ├── DropdownMenu.tsx          Generic dropdown (used by Sidebar new-page button,
+│       │                             PropertyBar "...", CustomPageTypeManager "...")
 │       └── ThemeToggle.tsx           Dark / light mode toggle (writes .light class to <html>)
 │
 ├── hooks/
 │   ├── useWorkspace.ts               useWorkspaces, useWorkspace, useCreateWorkspace,
 │   │                                 useUpdateWorkspace, useDeleteWorkspace
 │   ├── usePages.ts                   usePages, useCreatePage, useUpdatePage, useDeletePage
-│   └── useBlocks.ts                  useBlocks, useCreateBlock, useUpdateBlock, useDeleteBlock
+│   ├── useBlocks.ts                  useBlocks, useCreateBlock, useUpdateBlock, useDeleteBlock
+│   ├── useProperties.ts              usePropertyDefinitions, usePropertyValues,
+│   │                                 useCreateDefinition, useUpdateDefinition,
+│   │                                 useDeleteDefinition, useUpsertValue
+│   └── useCustomPageTypes.ts         [Feature 5] useCustomPageTypes, useCreateCustomPageType,
+│                                     useUpdateCustomPageType, useDeleteCustomPageType
+│                                     Query key: ['custom-page-types', workspaceId]
 │
 ├── lib/
 │   ├── api.ts                        Axios instance + authApi, workspaceApi, pageApi,
-│   │                                 blockApi, aiApi, relationsApi (Phase 2)
-│   │                                 pageApi.backlinks(pageId) added in Phase 2
+│   │                                 blockApi, aiApi, relationsApi, propertyApi,
+│   │                                 customPageTypeApi (Feature 5)
+│   │                                 customPageTypeApi: list / create / update / delete
+│   │                                 → /api/properties/custom-types/
 │   ├── auth.ts                       In-memory access token + session flag cookie helpers
 │   ├── store.ts                      Zustand store — AuthSlice, WorkspaceSlice, UISlice
 │   ├── queryClient.tsx               React Query QueryClient config + <Providers> wrapper
@@ -126,7 +146,10 @@ my-frontend/src/
 ├── types/
 │   └── index.ts                      All TypeScript interfaces (mirrors Django models):
 │                                     User, Workspace, Page, Block, AiAction,
-│                                     Connection, BacklinkPage (Phase 2)
+│                                     Connection, BacklinkPage, PropertyDefinition,
+│                                     PropertyValue, CustomPageType (Feature 5)
+│                                     Page now includes: custom_page_type?: string | null
+│                                     CreatePagePayload + UpdatePagePayload include same field
 │
 └── middleware.ts                     Edge runtime — redirects unauthenticated users
                                       (checks has_session cookie; no JWT validation)
@@ -169,6 +192,12 @@ my-frontend/src/
 | **Change canvas block appearance** | `src/components/canvas/CanvasBlock.tsx` | Card wrapper `className` · sticky variant classes · selected border/shadow |
 | **Change canvas pan/zoom behaviour** | `src/components/canvas/CanvasView.tsx` | `MIN_SCALE` / `MAX_SCALE` constants · wheel handler factor (0.9 / 1.1) · `panStartRef` logic |
 | **Toggle canvas/document mode** | `src/app/(app)/[workspaceId]/[pageId]/page.tsx` | View-mode toggle button (after AI button) · `isCanvas` derived const |
+| **Create / manage custom page types** | `src/components/sidebar/Sidebar.tsx` | Layers button in footer → toggles `customTypeManagerOpen` → renders `<CustomPageTypeManager>` |
+| **Change custom type manager UI** | `src/components/workspace/CustomPageTypeManager.tsx` | Full component — list, create form, rename, delete |
+| **Add a new page with a custom type** | `src/components/sidebar/Sidebar.tsx` | `newPageMenuItems` array → one item per `customTypes` entry → `handleCreatePage(null, type.id)` |
+| **Change property filtering logic** | `src/components/properties/PropertyBar.tsx` | `visibleDefinitions` filter — `is_global \|\| custom_page_type === customPageTypeId` |
+| **Change which custom type a page uses** | `PATCH /api/pages/:id/` with `{ custom_page_type: uuid }` | `UpdatePagePayload` in `src/types/index.ts` |
+| **Add fields to CustomPageType model** | `Apps/properties/models.py` → `CustomPageType` | Then: run migration · update `CustomPageTypeSerializer` · update `CustomPageType` interface in `types/index.ts` |
 
 ---
 
@@ -196,6 +225,14 @@ my-frontend/src/
 | `src/components/canvas/CanvasView.tsx` | `CanvasBlock.tsx` (renders one per block) · `CanvasToolbar.tsx` (toolbar at bottom) |
 | `src/components/canvas/CanvasBlock.tsx` | `src/hooks/useBlocks.ts` → `useUpdateBlock` (drag-end + resize-end PATCH) · `@tiptap/react` (`useEditor` in `TextContent`) |
 | `src/app/(app)/[workspaceId]/[pageId]/page.tsx` (canvas conditional) | `src/components/canvas/CanvasView.tsx` · `src/hooks/usePages.ts` → `useUpdatePage` (view_mode toggle) |
+| `src/components/workspace/CustomPageTypeManager.tsx` | `src/hooks/useCustomPageTypes.ts` (all 4 hooks) · `src/components/ui/DropdownMenu.tsx` (row "..." menu) |
+| `src/components/sidebar/Sidebar.tsx` (new-page dropdown) | `src/hooks/useCustomPageTypes.ts` · `handleCreatePage` signature (now accepts `customPageTypeId`) · `src/types/index.ts` `CreatePagePayload.custom_page_type` |
+| `src/components/sidebar/Sidebar.tsx` (Layers button) | `src/components/workspace/CustomPageTypeManager.tsx` · `customTypeManagerOpen` local state |
+| `src/components/properties/PropertyBar.tsx` `customPageTypeId` prop | `src/app/(app)/[workspaceId]/[pageId]/page.tsx` → `<PropertyBar customPageTypeId={page.custom_page_type ?? null}>` |
+| `src/components/properties/PropertyBar.tsx` `visibleDefinitions` filter | `src/types/index.ts` `PropertyDefinition.custom_page_type` · `PropertyDefinition.is_global` |
+| `Apps/properties/models.py` `CustomPageType` fields | Run `makemigrations` + `migrate` · `Apps/properties/serializers.py` `CustomPageTypeSerializer` · `src/types/index.ts` `CustomPageType` interface · `src/lib/api.ts` `customPageTypeApi` payload types |
+| `Apps/pages/models.py` `Page.custom_page_type` FK | `Apps/pages/serializers.py` (all 4 serializers) · `src/types/index.ts` `Page.custom_page_type` · `[pageId]/page.tsx` → `<PropertyBar customPageTypeId>` |
+| `Apps/properties/urls.py` custom-types routes | `src/lib/api.ts` `customPageTypeApi` hardcoded paths (`/api/properties/custom-types/`) |
 
 ---
 
@@ -224,16 +261,22 @@ User submits login form
                       → router.push('/workspace') → middleware sees cookie → allows through
 ```
 
-### New page creation
+### New page creation (with custom type)
 ```
-User clicks "+ New page" in Sidebar
-  → handleCreatePage(null)
-       → createPage.mutateAsync({ title: 'Untitled', page_type: 'note' })
-            → POST /api/pages/ with { workspace: workspaceId, title, page_type }
-                 → Django returns new Page object
-                      → queryClient.invalidateQueries(['pages', workspaceId])
-                           → Sidebar PageTree re-renders with new page
-                                → window.location.href = `/${workspaceId}/${newPage.id}`
+User clicks "New page" dropdown in Sidebar
+  → DropdownMenu renders: "New page" + one item per CustomPageType
+       → user clicks "New Client"
+            → handleCreatePage(null, type.id)
+                 → createPage.mutateAsync({ title: 'Untitled', page_type: 'note',
+                                            custom_page_type: type.id })
+                      → POST /api/pages/ with { workspace, title, page_type, custom_page_type }
+                           → Django returns new Page object with custom_page_type set
+                                → queryClient.invalidateQueries(['pages', workspaceId])
+                                     → router.push(`/${workspaceId}/${newPage.id}`)
+                                          → [pageId]/page.tsx loads page
+                                               → <PropertyBar customPageTypeId={page.custom_page_type}>
+                                                    → visibleDefinitions filters to
+                                                       globals + definitions for this type only
 ```
 
 ### Page link insert (Phase 2)
@@ -290,7 +333,6 @@ Any API call returns 401
 | Voice transcription endpoint `/api/ai/transcribe/` may not exist yet | `Editor.tsx` `startWhisperRecording()` | Whisper path is a fallback for non-Chrome browsers |
 | `sidebarCollapsed` rail mode (48px) has no expand button in rail view | `Sidebar.tsx` | Currently only the hamburger in AppShellClient can reopen |
 | Image uploads are base64 only — no server storage | `Editor.tsx` `handlePaste` / `handleDrop` | Feature 4: upload to Django media, store URL in block |
-| No page search / command palette | — | Feature 5: Cmd+K modal planned |
 | Mobile sidebar overlay closes on nav but no swipe-to-open gesture | `Sidebar.tsx` | Low priority — app is primarily desktop |
 | `[[` suggestion `allowSpaces: true` means the popup stays open across word boundaries | `extensions/PageLink.ts` → `PageLinkSuggestion` | If this causes UX issues, set `allowSpaces: false` and require single-word queries |
 | Canvas drag coordinates are in unscaled canvas-space but pointer deltas are in screen-space — at zoom ≠ 1 blocks drift from the cursor | `CanvasBlock.tsx` `onDragMove` | Fix: divide delta by `scale` before applying. Currently drag is only smooth at 100% zoom |
@@ -302,3 +344,7 @@ Any API call returns 401
 | Document mode — blocks only flow up/down; left/right drag is indent/outdent for list items only | By design | Document mode is linear flow (like Notion). True free-form 2D positioning requires canvas mode |
 | Canvas mode — no connection lines between blocks | Phase 3 planned | Add arrow/edge connections between canvas blocks |
 | Canvas mode — no minimap | Phase 3 planned | Small overview map in corner showing block positions at a glance |
+| **Custom page types — no UI to assign a type to an existing page** | `[pageId]/page.tsx` or `PropertyBar.tsx` | Currently `custom_page_type` can only be set at page creation time via the sidebar dropdown. A "Change type" option in the page `...` menu or in `PropertyBar` would let users reassign types after creation |
+| **Custom page types — deleting a type sets `custom_page_type = null` on all its pages** | `Apps/pages/models.py` `SET_NULL` | By design (safe cascade). Pages become type-less; their scoped definitions are hidden by `visibleDefinitions` filter until a new type is assigned |
+| **Custom page types — `description` field captured but not displayed anywhere** | `CustomPageTypeManager.tsx` | The `description` field is stored and returned by the API but the manager UI does not expose an input for it yet |
+| **Custom page type definitions are hidden on pages with no type set** | `PropertyBar.tsx` `visibleDefinitions` | When `customPageTypeId` is `null`, only global + unscoped definitions show. Scoped definitions are invisible until a type is assigned to the page |

@@ -376,6 +376,29 @@ body {
   color: var(--violet);
 }
 
+/* ── Block hover / selected border ──────────────────────────────────────── */
+.tiptap-editor .ProseMirror > * {
+  border:        1px solid transparent;
+  border-radius: 4px;
+  transition:    border-color 100ms ease;
+}
+.tiptap-editor .ProseMirror > *:hover {
+  border-color: rgba(139, 92, 246, 0.25);   /* violet-500 @ 25% */
+}
+.tiptap-editor .ProseMirror > *.ProseMirror-selectednode {
+  border-color: rgba(139, 92, 246, 0.6);
+}
+.tiptap-editor .ProseMirror > *:focus-within {
+  border-color: rgba(139, 92, 246, 0.4);
+}
+/* Light mode */
+.light .tiptap-editor .ProseMirror > *:hover {
+  border-color: rgba(109, 40, 217, 0.2);
+}
+.light .tiptap-editor .ProseMirror > *.ProseMirror-selectednode {
+  border-color: rgba(109, 40, 217, 0.5);
+}
+
 /* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
    7. SYNTAX HIGHLIGHTING (VS Code Style)
    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */

@@ -18,6 +18,7 @@ class PageSerializer(serializers.ModelSerializer):
             'id',
             'workspace',
             'parent',
+            'custom_page_type',
             'created_by',
             'created_by_name',
             'page_type',
@@ -52,7 +53,7 @@ class PageCreateSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Page
-        fields = ['id', 'workspace', 'parent', 'page_type', 'title', 'icon', 'view_mode']
+        fields = ['id', 'workspace', 'parent', 'custom_page_type', 'page_type', 'title', 'icon', 'view_mode']
         read_only_fields = ['id']
 
     def validate_parent(self, value):
@@ -73,7 +74,7 @@ class PageUpdateSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Page
-        fields = ['title', 'icon', 'header_pic', 'is_pinned', 'parent', 'page_type', 'view_mode']
+        fields = ['title', 'icon', 'header_pic', 'is_pinned', 'parent', 'custom_page_type', 'page_type', 'view_mode']
 
     def validate_parent(self, value):
         """Prevent making page a child of itself."""
@@ -131,6 +132,7 @@ class PageListSerializer(serializers.ModelSerializer):
             'title',
             'icon',
             'page_type',
+            'custom_page_type',
             'parent',
             'is_pinned',
             'is_locked',

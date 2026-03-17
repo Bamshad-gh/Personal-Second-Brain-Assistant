@@ -49,6 +49,13 @@ class Page(EncryptableMixin, AIPermissionMixin, BaseModel):
         on_delete=models.SET_NULL,
         related_name='children',
     )
+    custom_page_type = models.ForeignKey(
+        'properties.CustomPageType',
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name='pages',
+    )
 
     # ── Display ───────────────────────────────────────────────
     page_type  = models.CharField(max_length=50, choices=PageType.choices, default=PageType.NOTE)

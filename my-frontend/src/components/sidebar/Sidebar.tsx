@@ -2,7 +2,7 @@
  * components/sidebar/Sidebar.tsx
  *
  * What:    The main sidebar container. Fixed on the left, 260px wide.
- *          Contains: WorkspaceSwitcher, + New Page button, PageTree, user footer.
+ *          Contains: WorkspaceSwitcher, + New Page dropdown, PageTree, user footer.
  *          On mobile, slides in/out based on Zustand sidebarOpen state.
  *
  * Props:
@@ -18,19 +18,22 @@
 
 'use client';
 
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { usePathname } from 'next/navigation';
-import { Plus, LogOut, Settings, PanelLeftClose } from 'lucide-react';
+import { Plus, LogOut, Settings, PanelLeftClose, Layers } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useQuery } from '@tanstack/react-query';
 import { useAppStore } from '@/lib/store';
 import { useWorkspaces, useWorkspace } from '@/hooks/useWorkspace';
 import { usePages, useCreatePage, useDeletePage, useUpdatePage } from '@/hooks/usePages';
+import { useCustomPageTypes } from '@/hooks/useCustomPageTypes';
 import { authApi, aiApi } from '@/lib/api';
 import { WorkspaceSwitcher } from './WorkspaceSwitcher';
 import { PageTree } from './PageTree';
 import { ThemeToggle } from '@/components/ui/ThemeToggle';
+import { DropdownMenu } from '@/components/ui/DropdownMenu';
+import { CustomPageTypeManager } from '@/components/workspace/CustomPageTypeManager';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -50,9 +53,6 @@ export function Sidebar({ workspaceId, activePageId }: SidebarProps) {
   const router = useRouter();
 
   // ── Global state ──────────────────────────────────────────────────────────
-  // Each selector returns a single primitive or stable function reference.
-  // NEVER return an object literal from a selector — it creates a new reference
-  // on every render, causing useSyncExternalStore to loop infinitely.
   const user                  = useAppStore((s) => s.user);
   const logout                = useAppStore((s) => s.logout);
   const activeWorkspace       = useAppStore((s) => s.activeWorkspace);
@@ -65,14 +65,18 @@ export function Sidebar({ workspaceId, activePageId }: SidebarProps) {
   const { data: workspaces = [] } = useWorkspaces();
   const { data: workspaceData } = useWorkspace(workspaceId);
   const { data: pages = [], isLoading: pagesLoading } = usePages(workspaceId);
+  const { data: customTypes = [] } = useCustomPageTypes(workspaceId);
   const createPage = useCreatePage(workspaceId);
   const deletePage = useDeletePage(workspaceId);
   const updatePage = useUpdatePage(workspaceId);
   const { data: aiUsage } = useQuery({
     queryKey: ['ai-usage'],
     queryFn: () => aiApi.getUsage(),
-    staleTime: 1000 * 60 * 5, // 5 min — usage doesn't need to be real-time
+    staleTime: 1000 * 60 * 5,
   });
+
+  // ── Custom type manager popover state ─────────────────────────────────────
+  const [customTypeManagerOpen, setCustomTypeManagerOpen] = useState(false);
 
   // Sync the workspace data into Zustand when it loads
   useEffect(() => {
@@ -88,15 +92,18 @@ export function Sidebar({ workspaceId, activePageId }: SidebarProps) {
 
   // ── Actions ───────────────────────────────────────────────────────────────
 
-  /** Create a new top-level page in this workspace */
-  async function handleCreatePage(parentId: string | null = null) {
+  /** Create a new page — optionally scoped to a custom type */
+  async function handleCreatePage(
+    parentId: string | null = null,
+    customPageTypeId?: string,
+  ) {
     try {
       const newPage = await createPage.mutateAsync({
-        title:     'Untitled',
-        parent:    parentId,
-        page_type: 'note',
+        title:            'Untitled',
+        parent:           parentId,
+        page_type:        'note',
+        ...(customPageTypeId ? { custom_page_type: customPageTypeId } : {}),
       });
-      // Navigate into the new page immediately
       router.push(`/${workspaceId}/${newPage.id}`);
     } catch {
       toast.error('Could not create page. Please try again.');
@@ -107,7 +114,6 @@ export function Sidebar({ workspaceId, activePageId }: SidebarProps) {
   async function handleDeletePage(pageId: string) {
     try {
       await deletePage.mutateAsync(pageId);
-      // If the deleted page was the active one, redirect to workspace home
       if (activePageId === pageId) {
         router.push(`/${workspaceId}`);
       }
@@ -130,19 +136,34 @@ export function Sidebar({ workspaceId, activePageId }: SidebarProps) {
     try {
       await authApi.logout();
     } finally {
-      logout(); // clear Zustand state regardless of API result
+      logout();
       window.location.href = '/login';
     }
   }
 
-  // ── The workspace to display (prefer Zustand value, fallback to API data) ──
+  // ── "New page" dropdown items ─────────────────────────────────────────────
+  const newPageMenuItems = [
+    {
+      label:   'New page',
+      icon:    <span className="text-neutral-500">📄</span>,
+      onClick: () => handleCreatePage(null),
+    },
+    // One item per custom type defined in this workspace
+    ...customTypes.map((type) => ({
+      label:   `New ${type.name}`,
+      icon:    <span>{type.icon || '📄'}</span>,
+      onClick: () => handleCreatePage(null, type.id),
+    })),
+  ];
+
+  // ── The workspace to display ──────────────────────────────────────────────
   const displayWorkspace = activeWorkspace ?? workspaceData;
 
   // ── Render ────────────────────────────────────────────────────────────────
 
   return (
     <>
-      {/* ── Mobile overlay — closes sidebar when clicking outside ───────── */}
+      {/* ── Mobile overlay ───────────────────────────────────────────────── */}
       {sidebarOpen && (
         <div
           className="fixed inset-0 z-20 bg-black/60 md:hidden"
@@ -174,7 +195,6 @@ export function Sidebar({ workspaceId, activePageId }: SidebarProps) {
               <div className="h-11 animate-pulse rounded-lg bg-neutral-800" />
             )}
           </div>
-          {/* Collapse — hides the sidebar; use the hamburger in top bar to reopen */}
           <button
             onClick={() => setSidebarOpen(false)}
             className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-neutral-600 hover:bg-neutral-800 hover:text-neutral-300 transition-colors"
@@ -184,15 +204,16 @@ export function Sidebar({ workspaceId, activePageId }: SidebarProps) {
           </button>
         </div>
 
-        {/* ── New page button ────────────────────────────────────────────── */}
+        {/* ── New page dropdown ──────────────────────────────────────────── */}
         <div className="px-2 pb-2">
-          <button
-            onClick={() => handleCreatePage(null)}
-            className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm text-neutral-400 transition-colors hover:bg-neutral-800 hover:text-neutral-200"
-          >
-            <Plus size={14} />
-            <span>New page</span>
-          </button>
+          <DropdownMenu items={newPageMenuItems} placement="right">
+            <button
+              className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm text-neutral-400 transition-colors hover:bg-neutral-800 hover:text-neutral-200"
+            >
+              <Plus size={14} />
+              <span>New page</span>
+            </button>
+          </DropdownMenu>
         </div>
 
         {/* ── Divider ───────────────────────────────────────────────────── */}
@@ -201,7 +222,6 @@ export function Sidebar({ workspaceId, activePageId }: SidebarProps) {
         {/* ── Page tree (scrollable) ─────────────────────────────────────── */}
         <div className="flex-1 overflow-y-auto py-2">
           {pagesLoading ? (
-            // Skeleton rows while pages load
             <div className="space-y-1 px-2">
               {[...Array(5)].map((_, i) => (
                 <div key={i} className="h-7 animate-pulse rounded-md bg-neutral-800" />
@@ -221,8 +241,19 @@ export function Sidebar({ workspaceId, activePageId }: SidebarProps) {
 
         {/* ── Footer: user + settings ────────────────────────────────────── */}
         <div className="border-t border-neutral-800 p-2">
+
+          {/* Custom type manager popover — anchored above the footer */}
+          {customTypeManagerOpen && (
+            <div className="mb-2">
+              <CustomPageTypeManager
+                workspaceId={workspaceId}
+                onClose={() => setCustomTypeManagerOpen(false)}
+              />
+            </div>
+          )}
+
           <div className="flex items-center gap-2 rounded-lg px-2 py-1.5">
-            {/* User avatar — circle with initials */}
+            {/* User avatar */}
             <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-violet-700 text-xs font-semibold text-white">
               {user?.full_name?.[0]?.toUpperCase() ?? '?'}
             </div>
@@ -238,7 +269,7 @@ export function Sidebar({ workspaceId, activePageId }: SidebarProps) {
               </p>
             </div>
 
-            {/* Settings button — placeholder for later */}
+            {/* Settings button */}
             <button
               className="flex h-6 w-6 items-center justify-center rounded text-neutral-600 hover:bg-neutral-700 hover:text-neutral-300 transition-colors"
               title="Settings (coming soon)"
@@ -246,7 +277,21 @@ export function Sidebar({ workspaceId, activePageId }: SidebarProps) {
               <Settings size={13} />
             </button>
 
-            {/* Theme toggle — switches dark / light mode */}
+            {/* Page type manager toggle */}
+            <button
+              onClick={() => setCustomTypeManagerOpen((v) => !v)}
+              className={[
+                'flex h-6 w-6 items-center justify-center rounded transition-colors',
+                customTypeManagerOpen
+                  ? 'bg-violet-700 text-white'
+                  : 'text-neutral-600 hover:bg-neutral-700 hover:text-neutral-300',
+              ].join(' ')}
+              title="Manage page types"
+            >
+              <Layers size={13} />
+            </button>
+
+            {/* Theme toggle */}
             <ThemeToggle />
 
             {/* Logout button */}

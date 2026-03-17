@@ -22,11 +22,15 @@
  *   danger  — red-400 text, red tinted hover background
  *
  * Props:
- *   items    — array of DropdownItem config objects
- *   children — the trigger element (button, div, etc.)
+ *   items     — array of DropdownItem config objects
+ *   children  — the trigger element (button, div, etc.)
+ *   placement — 'left' (default): right-aligns menu to trigger's right edge
+ *               'right': left-aligns menu to trigger's left edge (use for
+ *               triggers on the left side of the screen, e.g. sidebar buttons)
  *
  * Used by:
  *   src/components/sidebar/SidebarItem.tsx
+ *   src/components/sidebar/Sidebar.tsx  (placement='right')
  *   src/app/(app)/[workspaceId]/[pageId]/page.tsx
  */
 
@@ -53,51 +57,59 @@ export interface DropdownItem {
 }
 
 interface DropdownMenuProps {
-  items:    DropdownItem[];
-  children: React.ReactNode; // the trigger button/element
+  items:      DropdownItem[];
+  children:   React.ReactNode;  // the trigger button/element
+  placement?: 'left' | 'right'; // default: 'left' (right-aligned to trigger)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Approximate menu height used to decide whether to flip above the trigger.
 // Calculated as: (items × 36px item height) + 8px vertical padding.
 // ─────────────────────────────────────────────────────────────────────────────
-const ITEM_HEIGHT   = 36;
-const MENU_V_PAD    = 8;
-const FLIP_THRESHOLD = 200; // px below cursor — if less, flip above
+const ITEM_HEIGHT    = 36;
+const MENU_V_PAD     = 8;
+const FLIP_THRESHOLD = 200; // px below trigger — if less, flip above
 
 // ─────────────────────────────────────────────────────────────────────────────
 // DropdownMenu
 // ─────────────────────────────────────────────────────────────────────────────
 
-export function DropdownMenu({ items, children }: DropdownMenuProps) {
-  const [isOpen, setIsOpen]       = useState(false);
-  const [mounted, setMounted]     = useState(false);
-  const [position, setPosition]   = useState({ top: 0, right: 0 });
-  const triggerRef                = useRef<HTMLDivElement>(null);
+export function DropdownMenu({ items, children, placement = 'left' }: DropdownMenuProps) {
+  const [isOpen, setIsOpen]     = useState(false);
+  const [mounted, setMounted]   = useState(false);
+  // Position holds both left and right so the portal style can branch cleanly.
+  const [position, setPosition] = useState({ top: 0, left: 0, right: 0 });
+  const triggerRef              = useRef<HTMLDivElement>(null);
 
-  // Portal mount guard — prevents SSR / pre-hydration createPortal calls
+  // Portal mount guard — prevents SSR / pre-hydration createPortal calls.
+  // Intentional setState-in-effect: runs once, empty deps, no cascade risk.
+  // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => { setMounted(true); }, []);
 
   // ── Calculate dropdown position from trigger's bounding rect ──────────────
   const calculatePosition = useCallback(() => {
     if (!triggerRef.current) return;
-    const rect = triggerRef.current.getBoundingClientRect();
+    const rect       = triggerRef.current.getBoundingClientRect();
     const menuHeight = items.length * ITEM_HEIGHT + MENU_V_PAD;
     const spaceBelow = window.innerHeight - rect.bottom;
 
     const top = spaceBelow < FLIP_THRESHOLD
-      ? rect.top - menuHeight - 4   // flip above trigger
-      : rect.bottom + 4;            // open below trigger
+      ? rect.top - menuHeight - 4  // flip above trigger
+      : rect.bottom + 4;           // open below trigger
 
-    // Right-align the dropdown to the right edge of the trigger
-    const right = window.innerWidth - rect.right;
-
-    setPosition({ top, right });
-  }, [items.length]);
+    if (placement === 'right') {
+      // Left-align: menu's left edge lines up with trigger's left edge.
+      // Used for triggers on the left side of the screen (e.g. sidebar).
+      setPosition({ top, left: rect.left, right: 0 });
+    } else {
+      // Right-align (default): menu's right edge lines up with trigger's right edge.
+      setPosition({ top, left: 0, right: window.innerWidth - rect.right });
+    }
+  }, [items.length, placement]);
 
   // ── Toggle open / closed ──────────────────────────────────────────────────
   function handleTriggerClick(e: React.MouseEvent) {
-    e.stopPropagation(); // prevent bubbling to parent row (e.g. page select)
+    e.stopPropagation();
     if (!isOpen) calculatePosition();
     setIsOpen((prev) => !prev);
   }
@@ -107,7 +119,6 @@ export function DropdownMenu({ items, children }: DropdownMenuProps) {
     if (!isOpen) return;
 
     function handleOutsideClick(e: MouseEvent) {
-      // Ignore clicks inside the trigger wrapper
       if (triggerRef.current?.contains(e.target as Node)) return;
       setIsOpen(false);
     }
@@ -121,9 +132,7 @@ export function DropdownMenu({ items, children }: DropdownMenuProps) {
     if (!isOpen) return;
 
     function handleKeyDown(e: KeyboardEvent) {
-      if (e.key === 'Escape') {
-        setIsOpen(false);
-      }
+      if (e.key === 'Escape') setIsOpen(false);
     }
 
     document.addEventListener('keydown', handleKeyDown);
@@ -137,27 +146,23 @@ export function DropdownMenu({ items, children }: DropdownMenuProps) {
     item.onClick();
   }
 
+  // ── Portal style — branches on placement ──────────────────────────────────
+  const portalStyle: React.CSSProperties = placement === 'right'
+    ? { position: 'fixed', top: position.top, left:  position.left,  zIndex: 99999 }
+    : { position: 'fixed', top: position.top, right: position.right, zIndex: 99999 };
+
   // ── Render ────────────────────────────────────────────────────────────────
 
   return (
-    // Trigger wrapper — provides the ref for position calculation
     <div ref={triggerRef} onClick={handleTriggerClick} className="relative inline-flex">
       {children}
 
-      {/* Dropdown portal — only rendered when open + mounted (client-side) */}
       {isOpen && mounted && createPortal(
         <div
-          style={{
-            position: 'fixed',
-            top:   position.top,
-            right: position.right,
-            zIndex: 99999,
-          }}
-          // Prevent mousedown from bubbling up and closing the dropdown
-          // before the item's onClick can fire
+          style={portalStyle}
           onMouseDown={(e) => e.stopPropagation()}
         >
-          <div className="animate-fade-in min-w-[160px] overflow-hidden rounded-lg border border-neutral-800 bg-neutral-900 py-1 shadow-xl">
+          <div className="animate-fade-in min-w-40 overflow-hidden rounded-lg border border-neutral-800 bg-neutral-900 py-1 shadow-xl">
             {items.map((item, index) => (
               <button
                 key={index}
@@ -168,12 +173,9 @@ export function DropdownMenu({ items, children }: DropdownMenuProps) {
                   item.variant === 'danger'
                     ? 'text-red-400 hover:bg-red-950/30'
                     : 'text-neutral-300 hover:bg-neutral-800',
-                  item.disabled
-                    ? 'cursor-not-allowed opacity-40'
-                    : 'cursor-pointer',
+                  item.disabled ? 'cursor-not-allowed opacity-40' : 'cursor-pointer',
                 ].join(' ')}
               >
-                {/* Optional icon */}
                 {item.icon && (
                   <span className="shrink-0 text-current">{item.icon}</span>
                 )}

@@ -43,7 +43,7 @@
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 import { useState, useEffect, useRef }      from 'react';
-import { useCreateBlock, useUpdateBlock }   from '@/hooks/useBlocks';
+import { useCreateBlock, useUpdateBlock, useDeleteBlock } from '@/hooks/useBlocks';
 import { CanvasBlock }                      from './CanvasBlock';
 import { CanvasToolbar }                    from './CanvasToolbar';
 import type { Block }                       from '@/types';
@@ -133,6 +133,7 @@ export function CanvasView({
   // ── Mutations ─────────────────────────────────────────────────────────────
   const updateBlock = useUpdateBlock(pageId);
   const createBlock = useCreateBlock(pageId);
+  const deleteBlock = useDeleteBlock(pageId);
 
   // ── Space key listener ────────────────────────────────────────────────────
   // Enables Space + left-drag canvas pan.
@@ -240,13 +241,15 @@ export function CanvasView({
     const cy = (rect.height / 2 - panYRef.current) / scaleRef.current - 50;
 
     createBlock.mutate({
-      block_type: blockType,
-      content:    {},
-      order:      blocks.length + 1,
-      canvas_x:   cx,
-      canvas_y:   cy,
-      canvas_w:   300,
-      canvas_z:   0,
+      block_type:     blockType,
+      content:        {},
+      order:          blocks.length + 1,
+      canvas_x:       cx,
+      canvas_y:       cy,
+      canvas_w:       300,
+      canvas_z:       0,
+      canvas_visible: true,
+      doc_visible:    false,
     });
   }
 
@@ -298,9 +301,20 @@ export function CanvasView({
               block={blockWithPos}
               isSelected={selectedId === block.id}
               onSelect={() => setSelectedId(block.id)}
-              onDragEnd={(x, y) =>
-                updateBlock.mutate({ id: block.id, payload: { canvas_x: x, canvas_y: y } })
+              onDelete={() => deleteBlock.mutate(block.id)}
+              onToggleVisibility={() =>
+                updateBlock.mutate({ id: block.id, payload: { doc_visible: !block.doc_visible } })
               }
+              onDragEnd={(x, y) => {
+                // Only save canvas position if this block was already
+                // a canvas block (had canvas_x set when the page loaded).
+                // Prevents document content blocks from accidentally
+                // getting canvas positions assigned.
+                const original = blocks.find(b => b.id === block.id);
+                if (original && original.canvas_x !== null) {
+                  updateBlock.mutate({ id: block.id, payload: { canvas_x: x, canvas_y: y } });
+                }
+              }}
               onResizeEnd={(w, h) => {
                 // h === 0 means auto-height (CanvasBlock sentinel) — skip canvas_h
                 const payload = h > 0
