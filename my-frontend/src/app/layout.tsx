@@ -33,11 +33,16 @@ const inter = Inter({
 
 export const metadata: Metadata = {
   title: {
-    default: 'Second Brain',
+    default: 'Second Brain — Your Personal Workspace',
     template: '%s | Second Brain',
   },
-  description: 'Your personal workspace OS — notes, projects, clients, AI.',
-};
+  description: 'A personal workspace for notes, projects, and ideas.',
+  openGraph: {
+    title:       'Second Brain',
+    description: 'A personal workspace for notes, projects, and ideas.',
+    type:        'website',
+  },
+}
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
