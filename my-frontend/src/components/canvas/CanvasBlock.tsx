@@ -8,14 +8,16 @@
  *   block          — the Block data (canvas_x/y/w/z must be non-null)
  *   isSelected     — shows violet border + resize handle when true
  *   onSelect       — called when the user clicks the block
- *   onDragEnd      — called with (x, y) when a drag operation completes
+ *   onDragEnd      — called with (x, y) during drag (debounced 300ms) and
+ *                    immediately on pointerUp
  *   onResizeEnd    — called with (w, h) when a resize operation completes
  *   onContentSave  — called with (blockId, tiptapJson) after 500ms debounce
  *
  * Drag:
  *   Pointer-capture on the header grip div.
- *   Local state (localX/Y) updates during drag for a live preview;
- *   onDragEnd fires on pointerup only if the position changed.
+ *   Local state (localX/Y) updates during drag for a live preview.
+ *   onDragEnd is called with a 300ms debounce during drag AND immediately
+ *   on pointerUp to guarantee the final position is always saved.
  *
  * Resize:
  *   Pointer-capture on the bottom-right handle (visible only when selected).
@@ -38,7 +40,7 @@
 import { useState, useEffect, useRef }  from 'react';
 import { useEditor, EditorContent }     from '@tiptap/react';
 import StarterKit                       from '@tiptap/starter-kit';
-import { GripVertical, X, Eye, EyeOff } from 'lucide-react';
+import { GripVertical, X, FileText }    from 'lucide-react';
 import type { Block }                   from '@/types';
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -107,6 +109,27 @@ export function CanvasBlock({
     if (!isResizingRef.current)  setLocalW(block.canvas_w ?? 300);
   }, [block.canvas_w]);
 
+  // ── Debounced position save ───────────────────────────────────────────────
+  // Fires onDragEnd during drag (300ms debounce) so the position is saved
+  // continuously — not only on pointerUp. The final pointerUp always saves
+  // immediately after cancelling any pending debounced call.
+  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  function savePosition(x: number, y: number) {
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    saveTimerRef.current = setTimeout(() => {
+      onDragEnd(x, y);
+      saveTimerRef.current = null;
+    }, 300);
+  }
+
+  // Clean up the debounce timer on unmount
+  useEffect(() => {
+    return () => {
+      if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    };
+  }, []);
+
   // ── Drag (pointer capture on header) ─────────────────────────────────────
 
   const dragRef = useRef<{
@@ -125,8 +148,13 @@ export function CanvasBlock({
 
   function onDragMove(e: React.PointerEvent<HTMLDivElement>) {
     if (!dragRef.current) return;
-    setLocalX(dragRef.current.origX + (e.clientX - dragRef.current.startMX));
-    setLocalY(dragRef.current.origY + (e.clientY - dragRef.current.startMY));
+    const newX = dragRef.current.origX + (e.clientX - dragRef.current.startMX);
+    const newY = dragRef.current.origY + (e.clientY - dragRef.current.startMY);
+    setLocalX(newX);
+    setLocalY(newY);
+    // Debounced save during drag — guarantees position is persisted even if
+    // pointerUp fires unexpectedly or the component unmounts mid-drag
+    savePosition(newX, newY);
   }
 
   function onDragUp(e: React.PointerEvent<HTMLDivElement>) {
@@ -135,10 +163,12 @@ export function CanvasBlock({
     const newY = dragRef.current.origY + (e.clientY - dragRef.current.startMY);
     dragRef.current = null;
     isDraggingRef.current = false;
-    // Only call onDragEnd if position actually changed
-    if (newX !== localX || newY !== localY) {
-      onDragEnd(newX, newY);
+    // Cancel the pending debounced save and save immediately on release
+    if (saveTimerRef.current) {
+      clearTimeout(saveTimerRef.current);
+      saveTimerRef.current = null;
     }
+    onDragEnd(newX, newY);
   }
 
   // ── Resize (pointer capture on bottom-right handle) ───────────────────────
@@ -242,10 +272,19 @@ export function CanvasBlock({
           {/* Visibility toggle — show/hide in document view */}
           <button
             onClick={(e) => { e.stopPropagation(); onToggleVisibility(); }}
-            className="absolute top-2 right-8 flex h-5 w-5 items-center justify-center rounded text-neutral-600 hover:bg-neutral-800 hover:text-neutral-300 transition-colors z-10"
-            title={block.doc_visible ? 'Hide in document' : 'Show in document'}
+            className={[
+              'absolute top-2 right-8 flex items-center gap-1',
+              'rounded px-1.5 py-0.5 text-xs transition-colors z-10',
+              block.doc_visible
+                ? 'bg-violet-900/40 text-violet-400 hover:bg-violet-900/60'
+                : 'bg-neutral-800 text-neutral-600 hover:bg-neutral-700 hover:text-neutral-400',
+            ].join(' ')}
+            title={block.doc_visible
+              ? 'Visible in document — click to hide'
+              : 'Hidden from document — click to show'}
           >
-            {block.doc_visible ? <EyeOff size={12} /> : <Eye size={12} />}
+            <FileText size={10} />
+            <span>{block.doc_visible ? 'In doc' : 'Doc'}</span>
           </button>
 
           {/* Delete */}

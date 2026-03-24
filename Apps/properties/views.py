@@ -1,24 +1,22 @@
 # Apps/properties/views.py
-"""
-CRUD views for PropertyDefinition and PropertyValue.
-
-Endpoints:
-  GET  /api/properties/definitions/?workspace=<id>   → list definitions
-  POST /api/properties/definitions/                  → create definition
-  GET  /api/properties/definitions/<pk>/             → retrieve
-  PATCH /api/properties/definitions/<pk>/            → update
-  DELETE /api/properties/definitions/<pk>/           → delete
-
-  GET  /api/properties/values/?page=<id>             → list values for a page
-  POST /api/properties/values/                       → create value
-  GET  /api/properties/values/<pk>/                  → retrieve
-  PATCH /api/properties/values/<pk>/                 → update
-  DELETE /api/properties/values/<pk>/                → delete
-
-Security:
-  - IsAuthenticated on all views
-  - All ownership checks via workspace__owner=request.user (404 not 403)
-"""
+#
+# CRUD views for PageTypeGroup, CustomPageType, PropertyDefinition, PropertyValue.
+#
+# Security model (same across all views):
+#   - IsAuthenticated required on every endpoint
+#   - Ownership verified via workspace__owner=request.user in every queryset
+#   - NEVER return 403 — get_object_or_404 with owner check returns 404
+#   - Django URL patterns use <uuid:pk> throughout
+#
+# Endpoint map:
+#   GET/POST        /api/properties/groups/            PageTypeGroupListCreateView
+#   PATCH/DELETE    /api/properties/groups/<pk>/       PageTypeGroupDetailView
+#   GET/POST        /api/properties/custom-types/      CustomPageTypeListCreateView
+#   GET/PATCH/DEL   /api/properties/custom-types/<pk>/ CustomPageTypeDetailView
+#   GET/POST        /api/properties/definitions/       PropertyDefinitionListView
+#   GET/PATCH/DEL   /api/properties/definitions/<pk>/  PropertyDefinitionDetailView
+#   GET/POST        /api/properties/values/            PropertyValueListView
+#   GET/PATCH/DEL   /api/properties/values/<pk>/       PropertyValueDetailView
 
 from rest_framework import status
 from rest_framework.views import APIView
@@ -28,11 +26,83 @@ from django.shortcuts import get_object_or_404
 
 from Apps.workspaces.models import Workspace
 from Apps.pages.models import Page
-from .models import CustomPageType, PropertyDefinition, PropertyValue
-from .serializers import CustomPageTypeSerializer, PropertyDefinitionSerializer, PropertyValueSerializer
+from .models import CustomPageType, PageTypeGroup, PropertyDefinition, PropertyValue
+from .serializers import (
+    CustomPageTypeSerializer,
+    PageTypeGroupSerializer,
+    PropertyDefinitionSerializer,
+    PropertyValueSerializer,
+)
 
 
-# ── Custom Page Types ─────────────────────────────────────────────────────────
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# Page Type Groups
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+class PageTypeGroupListCreateView(APIView):
+    """
+    GET  /api/properties/groups/?workspace=<id>   → list groups for a workspace
+    POST /api/properties/groups/                  → create a group
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        qs = PageTypeGroup.objects.filter(
+            workspace__owner=request.user,
+            is_deleted=False,
+        ).select_related('workspace')
+
+        workspace_id = request.query_params.get('workspace')
+        if workspace_id:
+            qs = qs.filter(workspace_id=workspace_id)
+
+        serializer = PageTypeGroupSerializer(qs, many=True)
+        return Response(serializer.data)
+
+    def post(self, request):
+        workspace_id = request.data.get('workspace')
+        get_object_or_404(Workspace, pk=workspace_id, owner=request.user, is_deleted=False)
+
+        serializer = PageTypeGroupSerializer(data=request.data)
+        if serializer.is_valid():
+            serializer.save()
+            return Response(serializer.data, status=status.HTTP_201_CREATED)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+class PageTypeGroupDetailView(APIView):
+    """
+    PATCH  /api/properties/groups/<pk>/  → update name, color, order
+    DELETE /api/properties/groups/<pk>/  → soft delete; unlinks all its CustomPageTypes first
+    """
+    permission_classes = [IsAuthenticated]
+
+    def patch(self, request, pk):
+        obj = get_object_or_404(
+            PageTypeGroup, pk=pk,
+            workspace__owner=request.user, is_deleted=False,
+        )
+        serializer = PageTypeGroupSerializer(obj, data=request.data, partial=True)
+        if serializer.is_valid():
+            serializer.save()
+            return Response(serializer.data)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    def delete(self, request, pk):
+        obj = get_object_or_404(
+            PageTypeGroup, pk=pk,
+            workspace__owner=request.user, is_deleted=False,
+        )
+        # Unlink all CustomPageTypes in this group so no orphaned FKs remain
+        CustomPageType.objects.filter(group=obj).update(group=None)
+        obj.is_deleted = True
+        obj.save(update_fields=['is_deleted'])
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# Custom Page Types
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 class CustomPageTypeListCreateView(APIView):
     """
@@ -45,7 +115,7 @@ class CustomPageTypeListCreateView(APIView):
         qs = CustomPageType.objects.filter(
             workspace__owner=request.user,
             is_deleted=False,
-        ).select_related('workspace')
+        ).select_related('workspace', 'group')
 
         workspace_id = request.query_params.get('workspace')
         if workspace_id:
@@ -56,7 +126,7 @@ class CustomPageTypeListCreateView(APIView):
 
     def post(self, request):
         workspace_id = request.data.get('workspace')
-        get_object_or_404(Workspace, pk=workspace_id, owner=request.user)
+        get_object_or_404(Workspace, pk=workspace_id, owner=request.user, is_deleted=False)
 
         serializer = CustomPageTypeSerializer(data=request.data)
         if serializer.is_valid():
@@ -101,7 +171,9 @@ class CustomPageTypeDetailView(APIView):
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
-# ── Definitions ───────────────────────────────────────────────────────────────
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# Property Definitions
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 class PropertyDefinitionListView(APIView):
     """
@@ -125,7 +197,7 @@ class PropertyDefinitionListView(APIView):
 
     def post(self, request):
         workspace_id = request.data.get('workspace')
-        get_object_or_404(Workspace, pk=workspace_id, owner=request.user)
+        get_object_or_404(Workspace, pk=workspace_id, owner=request.user, is_deleted=False)
 
         serializer = PropertyDefinitionSerializer(data=request.data)
         if serializer.is_valid():
@@ -170,7 +242,9 @@ class PropertyDefinitionDetailView(APIView):
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
-# ── Values ────────────────────────────────────────────────────────────────────
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# Property Values
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 class PropertyValueListView(APIView):
     """

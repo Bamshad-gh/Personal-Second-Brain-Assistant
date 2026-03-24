@@ -17,7 +17,7 @@
  * How to expand: Add new API groups at the bottom following the same pattern.
  *           Each group should mirror one Django app's endpoints.
  *
- * Exports: axiosInstance, authApi, workspaceApi, pageApi, blockApi, aiApi, relationsApi
+ * Exports: axiosInstance, authApi, workspaceApi, pageApi (+ uploadCover/removeCover/getGallery), blockApi, aiApi, relationsApi, propertyApi, customPageTypeApi, pageTypeGroupApi, graphApi
  */
 
 import axios, {
@@ -37,11 +37,16 @@ import type {
   Page,
   Block,
   Connection,
+  BlockConnection,
   BacklinkPage,
   PagePreview,
   CustomPageType,
+  PageTypeGroup,
   PropertyDefinition,
   PropertyValue,
+  GraphNode,
+  GraphEdge,
+  GalleryImage,
   AuthTokens,
   RefreshResponse,
   PaginatedResponse,
@@ -340,6 +345,19 @@ export const workspaceApi = {
   delete: async (id: string): Promise<void> => {
     await axiosInstance.delete(`/api/workspaces/${id}/`);
   },
+
+  /**
+   * POST /api/workspaces/:id/seed-templates/
+   * Idempotent — seeds the built-in CLIENT, PROJECT, INVOICE page types.
+   * Safe to call multiple times; existing types are never overwritten.
+   * Returns one entry per template with whether it was newly created.
+   */
+  seedTemplates: async (id: string): Promise<{ seeded: { name: string; created: boolean }[] }> => {
+    const { data } = await axiosInstance.post<{ seeded: { name: string; created: boolean }[] }>(
+      `/api/workspaces/${id}/seed-templates/`
+    );
+    return data;
+  },
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -421,6 +439,32 @@ export const pageApi = {
   /** GET /api/pages/:id/preview/ — lightweight data for the hover card */
   preview: async (pageId: string): Promise<PagePreview> => {
     const { data } = await axiosInstance.get<PagePreview>(`/api/pages/${pageId}/preview/`);
+    return data;
+  },
+
+  /**
+   * POST /api/pages/:id/cover/ — upload a cover image file (multipart).
+   * Clears header_pic_url on the backend; returns the new absolute URL.
+   */
+  uploadCover: async (pageId: string, file: File): Promise<{ header_pic: string }> => {
+    const form = new FormData();
+    form.append('image', file);
+    const { data } = await axiosInstance.post<{ header_pic: string }>(
+      `/api/pages/${pageId}/cover/`,
+      form,
+      { headers: { 'Content-Type': 'multipart/form-data' } },
+    );
+    return data;
+  },
+
+  /** DELETE /api/pages/:id/cover/ — removes both header_pic file and header_pic_url */
+  removeCover: async (pageId: string): Promise<void> => {
+    await axiosInstance.delete(`/api/pages/${pageId}/cover/`);
+  },
+
+  /** GET /api/pages/gallery/ — list curated cover images from media/gallery/ */
+  getGallery: async (): Promise<GalleryImage[]> => {
+    const { data } = await axiosInstance.get<GalleryImage[]>('/api/pages/gallery/');
     return data;
   },
 };
@@ -676,6 +720,49 @@ export const customPageTypeApi = {
   },
 };
 
+// ─────────────────────────────────────────────────────────────────────────────
+// PAGE TYPE GROUPS API — named, coloured buckets for CustomPageTypes (Phase 3)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * pageTypeGroupApi — mirrors Django's /api/properties/groups/ endpoints.
+ *
+ * Endpoint map:
+ *   GET    /api/properties/groups/?workspace=<id>  → list groups
+ *   POST   /api/properties/groups/                 → create group
+ *   PATCH  /api/properties/groups/<id>/            → update name/color/order
+ *   DELETE /api/properties/groups/<id>/            → soft delete (unlinks types first)
+ */
+export const pageTypeGroupApi = {
+  list: async (workspaceId: string): Promise<PageTypeGroup[]> => {
+    const { data } = await axiosInstance.get<PageTypeGroup[]>(
+      '/api/properties/groups/',
+      { params: { workspace: workspaceId } },
+    );
+    return data;
+  },
+
+  create: async (payload: { workspace: string; name: string; color?: string; order?: number }): Promise<PageTypeGroup> => {
+    const { data } = await axiosInstance.post<PageTypeGroup>(
+      '/api/properties/groups/',
+      payload,
+    );
+    return data;
+  },
+
+  update: async (id: string, payload: Partial<Pick<PageTypeGroup, 'name' | 'color' | 'order'>>): Promise<PageTypeGroup> => {
+    const { data } = await axiosInstance.patch<PageTypeGroup>(
+      `/api/properties/groups/${id}/`,
+      payload,
+    );
+    return data;
+  },
+
+  delete: async (id: string): Promise<void> => {
+    await axiosInstance.delete(`/api/properties/groups/${id}/`);
+  },
+};
+
 export const relationsApi = {
   /**
    * POST /api/relations/
@@ -689,6 +776,90 @@ export const relationsApi = {
       source_page: sourcePageId,
       target_page: targetPageId,
     });
+    return data;
+  },
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// BLOCK CONNECTION API — canvas arrow connections between blocks
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * blockConnectionApi — CRUD for canvas arrow connections (BLOCK_LINK).
+ *
+ * Endpoint map:
+ *   GET    /api/relations/block-connections/?page={id}  → list for a page
+ *   POST   /api/relations/block-connections/            → create
+ *   PATCH  /api/relations/block-connections/{id}/       → update label/direction/type
+ *   DELETE /api/relations/block-connections/{id}/       → soft-delete
+ *
+ * WHERE THIS IS CALLED:
+ *   src/hooks/useBlockConnections.ts → useBlockConnections / mutations
+ */
+export const blockConnectionApi = {
+  list: async (pageId: string): Promise<BlockConnection[]> => {
+    const { data } = await axiosInstance.get<BlockConnection[]>(
+      '/api/relations/block-connections/',
+      { params: { page: pageId } },
+    );
+    return data;
+  },
+
+  create: async (payload: {
+    source_block: string;
+    target_block: string;
+    arrow_type?:  'link' | 'flow';
+    direction?:   'directed' | 'undirected';
+    label?:       string;
+  }): Promise<BlockConnection> => {
+    const { data } = await axiosInstance.post<BlockConnection>(
+      '/api/relations/block-connections/',
+      payload,
+    );
+    return data;
+  },
+
+  update: async (
+    id: string,
+    payload: Partial<Pick<BlockConnection, 'label' | 'direction' | 'arrow_type'>>,
+  ): Promise<BlockConnection> => {
+    const { data } = await axiosInstance.patch<BlockConnection>(
+      `/api/relations/block-connections/${id}/`,
+      payload,
+    );
+    return data;
+  },
+
+  remove: async (id: string): Promise<void> => {
+    await axiosInstance.delete(`/api/relations/block-connections/${id}/`);
+  },
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GRAPH API — workspace knowledge map (TASK 5)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * graphApi — fetches the full page graph for a workspace in one request.
+ *
+ * Endpoint map:
+ *   GET /api/relations/workspace/{id}/graph/
+ *     → { nodes: GraphNode[], edges: GraphEdge[] }
+ *
+ * WHERE THIS IS CALLED:
+ *   src/hooks/useWorkspaceGraph.ts → useWorkspaceGraph()
+ *   src/app/(app)/[workspaceId]/graph/page.tsx → d3-force SVG graph
+ */
+export const graphApi = {
+  /**
+   * GET /api/relations/workspace/{workspaceId}/graph/
+   * Returns all non-deleted pages (nodes) and PAGE_LINK connections (edges)
+   * for the given workspace. Both endpoints are ownership-checked on the backend.
+   */
+  getWorkspaceGraph: async (workspaceId: string): Promise<{ nodes: GraphNode[]; edges: GraphEdge[] }> => {
+    const { data } = await axiosInstance.get<{ nodes: GraphNode[]; edges: GraphEdge[] }>(
+      `/api/relations/workspace/${workspaceId}/graph/`,
+    );
     return data;
   },
 };

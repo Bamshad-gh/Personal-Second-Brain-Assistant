@@ -19,19 +19,22 @@
 
 'use client';
 
-import { Type, StickyNote, Minus, Plus, FileText } from 'lucide-react';
+import { Type, StickyNote, Minus, Plus, FileText, Image as ImageIcon } from 'lucide-react';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
 // ─────────────────────────────────────────────────────────────────────────────
 
 interface CanvasToolbarProps {
-  scale:         number;
-  onZoomIn:      () => void;
-  onZoomOut:     () => void;
-  onAddText:     () => void;
-  onAddSticky:   () => void;
-  onSwitchToDoc: () => void;
+  scale:          number;
+  onZoomIn:       () => void;
+  onZoomOut:      () => void;
+  onAddText:      () => void;
+  onAddSticky:    () => void;
+  onSwitchToDoc:  () => void;
+  hasCover?:      boolean;
+  coverExpanded?: boolean;
+  onToggleCover?: () => void;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -45,6 +48,9 @@ export function CanvasToolbar({
   onAddText,
   onAddSticky,
   onSwitchToDoc,
+  hasCover,
+  coverExpanded,
+  onToggleCover,
 }: CanvasToolbarProps) {
   return (
     <div
@@ -91,6 +97,21 @@ export function CanvasToolbar({
       {/* ── Divider ────────────────────────────────────────────────────── */}
       <Divider />
 
+      {/* ── Cover toggle (only when page has a cover) ──────────────────── */}
+      {hasCover && onToggleCover && (
+        <>
+          <Divider />
+          <ToolbarButton
+            onClick={onToggleCover}
+            title={coverExpanded ? 'Hide cover' : 'Show cover'}
+            active={coverExpanded}
+          >
+            <ImageIcon size={13} />
+            <span>{coverExpanded ? 'Hide cover' : 'Show cover'}</span>
+          </ToolbarButton>
+        </>
+      )}
+
       {/* ── Switch to document mode ────────────────────────────────────── */}
       <ToolbarButton onClick={onSwitchToDoc} title="Switch to document mode">
         <FileText size={13} />
@@ -108,10 +129,12 @@ function ToolbarButton({
   children,
   onClick,
   title,
+  active,
 }: {
   children: React.ReactNode;
   onClick:  () => void;
   title:    string;
+  active?:  boolean;
 }) {
   return (
     <button
@@ -119,8 +142,10 @@ function ToolbarButton({
       title={title}
       className={[
         'flex items-center gap-1.5 rounded-lg px-2.5 py-1.5',
-        'text-xs text-neutral-400 transition-colors',
-        'hover:bg-neutral-800 hover:text-neutral-200',
+        'text-xs transition-colors',
+        active
+          ? 'bg-violet-900/30 text-violet-400 hover:bg-violet-900/50'
+          : 'text-neutral-400 hover:bg-neutral-800 hover:text-neutral-200',
       ].join(' ')}
     >
       {children}

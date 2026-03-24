@@ -1,6 +1,3 @@
-from django.shortcuts import render
-
-# Create your views here.
 # Apps/blocks/views.py
 from rest_framework import status, generics
 from rest_framework.views import APIView
@@ -9,6 +6,7 @@ from rest_framework.permissions import IsAuthenticated
 from django.shortcuts import get_object_or_404
 from django.db import transaction
 from django.db.models import Max
+import uuid as uuid_lib
 
 from .models import Block
 from .serializers import (
@@ -19,6 +17,72 @@ from .serializers import (
     BlockReorderSerializer,
 )
 from Apps.pages.models import Page
+from Apps.relations.models import Connection
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Connection sync helper
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _sync_page_links(block: Block, content_json: dict) -> None:
+    """
+    Walk the TipTap JSON tree and collect all pageLink node pageids.
+    Create missing PAGE_LINK Connection rows and soft-delete stale ones.
+
+    Only touches connections where:
+      - conn_type = PAGE_LINK
+      - source_page = this block's page
+      - metadata does NOT contain 'relation' key  (preserves parent/child connections)
+
+    Called after every block PATCH that includes a 'content' payload.
+    """
+    if not block.page_id:
+        return
+
+    # ── Collect all target page IDs referenced in current content ────────────
+    referenced_ids: set[str] = set()
+
+    def walk(node: object) -> None:
+        if not isinstance(node, dict):
+            return
+        if node.get('type') == 'pageLink':
+            attrs = node.get('attrs') or {}
+            pid = attrs.get('pageid')
+            if pid:
+                referenced_ids.add(str(pid))
+        for child in node.get('content') or []:
+            walk(child)
+
+    walk(content_json)
+
+    source_page_id = block.page_id
+
+    # ── Create missing connections ────────────────────────────────────────────
+    for target_id in referenced_ids:
+        try:
+            target_uuid = uuid_lib.UUID(target_id)
+        except (ValueError, AttributeError):
+            continue
+        Connection.objects.get_or_create(
+            conn_type=Connection.ConnectionType.PAGE_LINK,
+            source_page_id=source_page_id,
+            target_page_id=target_uuid,
+            defaults={'metadata': {}, 'is_deleted': False},
+        )
+
+    # ── Soft-delete stale connections (source = this page, not in current set) ─
+    # Excludes connections that have a 'relation' key in metadata
+    # (those are parent/child links created by the page signal, not editor links).
+    existing = Connection.objects.filter(
+        conn_type=Connection.ConnectionType.PAGE_LINK,
+        source_page_id=source_page_id,
+        is_deleted=False,
+    ).exclude(metadata__has_key='relation')
+
+    for conn in existing:
+        if conn.target_page_id and str(conn.target_page_id) not in referenced_ids:
+            conn.is_deleted = True
+            conn.save(update_fields=['is_deleted'])
 
 
 class BlockListCreateView(generics.ListCreateAPIView):
@@ -105,6 +169,13 @@ class BlockDetailView(generics.RetrieveUpdateDestroyAPIView):
         serializer = self.get_serializer(instance, data=request.data, partial=partial)
         serializer.is_valid(raise_exception=True)
         serializer.save()
+
+        # Sync PAGE_LINK connections whenever content is included in the PATCH.
+        # Only runs when 'content' is present — skips canvas_x/y, doc_visible, etc.
+        content_payload = request.data.get('content')
+        if isinstance(content_payload, dict):
+            _sync_page_links(instance, content_payload.get('json') or {})
+
         return Response(BlockSerializer(instance).data)
 
 

@@ -1,13 +1,16 @@
 from django.shortcuts import render
 
-# Create your views here.
 # Apps/pages/views.py
 from rest_framework import status, generics
 from rest_framework.views import APIView
 from rest_framework.response import Response
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import IsAuthenticated, AllowAny
+from rest_framework.parsers import MultiPartParser, FormParser
 from django.shortcuts import get_object_or_404
 from django.db import transaction
+from django.conf import settings
+
+import os
 
 from .models import Page
 from .serializers import (
@@ -41,6 +44,10 @@ def _extract_tiptap_text(node: dict, max_chars: int = 100) -> str:
     result = ' '.join(parts).strip()
     return result[:max_chars]
 
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Page list + create
+# ─────────────────────────────────────────────────────────────────────────────
 
 class PageListCreateView(generics.ListCreateAPIView):
     """
@@ -95,6 +102,10 @@ class PageListCreateView(generics.ListCreateAPIView):
         )
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Page detail (retrieve / update / soft-delete)
+# ─────────────────────────────────────────────────────────────────────────────
+
 class PageDetailView(generics.RetrieveUpdateDestroyAPIView):
     """
     GET    /api/pages/{id}/  → Get page details
@@ -135,6 +146,10 @@ class PageDetailView(generics.RetrieveUpdateDestroyAPIView):
         return Response(PageSerializer(instance).data)
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Page editor (page + blocks)
+# ─────────────────────────────────────────────────────────────────────────────
+
 class PageEditorView(generics.RetrieveAPIView):
     """
     GET /api/pages/{id}/editor/  → Get page with all blocks for editor
@@ -150,10 +165,14 @@ class PageEditorView(generics.RetrieveAPIView):
         ).prefetch_related('blocks')
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Page children
+# ─────────────────────────────────────────────────────────────────────────────
+
 class PageChildrenView(APIView):
     """
-    GET /api/pages/{id}/children/  → Get direct children of a page
-    POST /api/pages/{id}/children/ → Create a child page
+    GET  /api/pages/{id}/children/  → Get direct children of a page
+    POST /api/pages/{id}/children/  → Create a child page
     """
 
     permission_classes = [IsAuthenticated]
@@ -188,6 +207,10 @@ class PageChildrenView(APIView):
 
         return Response(PageSerializer(serializer.instance).data, status=201)
 
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Page move
+# ─────────────────────────────────────────────────────────────────────────────
 
 class PageMoveView(APIView):
     """
@@ -229,6 +252,10 @@ class PageMoveView(APIView):
         page.save()
         return Response(PageSerializer(page).data)
 
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Page duplicate
+# ─────────────────────────────────────────────────────────────────────────────
 
 class PageDuplicateView(APIView):
     """
@@ -277,6 +304,10 @@ class PageDuplicateView(APIView):
         return Response(PageSerializer(new_page).data, status=201)
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Page preview (hover card)
+# ─────────────────────────────────────────────────────────────────────────────
+
 class PagePreviewView(APIView):
     """GET /api/pages/<pk>/preview/ — lightweight preview for hover cards."""
 
@@ -321,3 +352,93 @@ class PagePreviewView(APIView):
             'backlink_count':  backlink_count,
             'workspace_id':    str(page.workspace_id),
         })
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Page cover image — upload / remove
+# ─────────────────────────────────────────────────────────────────────────────
+
+class PageCoverView(APIView):
+    """
+    POST   /api/pages/{id}/cover/  → Upload a cover image (multipart, field: "image")
+    DELETE /api/pages/{id}/cover/  → Remove the cover image
+    """
+
+    permission_classes = [IsAuthenticated]
+    parser_classes = [MultiPartParser, FormParser]
+
+    def post(self, request, pk):
+        page = get_object_or_404(
+            Page,
+            pk=pk,
+            workspace__owner=request.user,
+            is_deleted=False,
+        )
+
+        image = request.FILES.get('image')
+        if not image:
+            return Response({'detail': 'No image file provided.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Clear any existing URL-based cover so file takes precedence
+        page.header_pic_url = ''
+        page.header_pic = image
+        page.save(update_fields=['header_pic', 'header_pic_url'])
+
+        return Response({
+            'header_pic': request.build_absolute_uri(page.header_pic.url),
+        }, status=status.HTTP_200_OK)
+
+    def delete(self, request, pk):
+        page = get_object_or_404(
+            Page,
+            pk=pk,
+            workspace__owner=request.user,
+            is_deleted=False,
+        )
+
+        page.header_pic = None
+        page.header_pic_url = ''
+        page.save(update_fields=['header_pic', 'header_pic_url'])
+
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Gallery — curated shared cover images from media/gallery/
+# ─────────────────────────────────────────────────────────────────────────────
+
+class PageGalleryView(APIView):
+    """
+    GET /api/pages/gallery/
+    Returns a list of { id, url, credit } for every image in media/gallery/.
+    No authentication required — images are public static assets.
+    If the folder does not exist or is empty, returns [].
+    """
+
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        gallery_dir = os.path.join(settings.MEDIA_ROOT, 'gallery')
+
+        if not os.path.isdir(gallery_dir):
+            return Response([])
+
+        allowed_extensions = {'.jpg', '.jpeg', '.png', '.webp', '.gif'}
+        images = []
+
+        for filename in sorted(os.listdir(gallery_dir)):
+            ext = os.path.splitext(filename)[1].lower()
+            if ext not in allowed_extensions:
+                continue
+
+            relative_path = f'gallery/{filename}'
+            url = request.build_absolute_uri(
+                settings.MEDIA_URL + relative_path
+            )
+            images.append({
+                'id':     filename,
+                'url':    url,
+                'credit': '',  # Admin can add metadata via gallery_meta.json in future
+            })
+
+        return Response(images)

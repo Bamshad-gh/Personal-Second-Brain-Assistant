@@ -61,6 +61,7 @@ import Color                                         from '@tiptap/extension-col
 import Image                                         from '@tiptap/extension-image';
 import toast                                         from 'react-hot-toast';
 
+import { useQueryClient }                            from '@tanstack/react-query';
 import { getAccessToken }                            from '@/lib/auth';
 import { relationsApi }                              from '@/lib/api';
 import { usePages }                                  from '@/hooks/usePages';
@@ -162,6 +163,8 @@ export function Editor({
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   // STATE — all useState and useRef declarations
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  const queryClient = useQueryClient();
 
   // Slash menu
   const [slashOpen,    setSlashOpen]    = useState(false);
@@ -743,12 +746,15 @@ export function Editor({
     setPageLinkOpen(false);
     pageLinkRangeRef.current = null;
 
-    // Record the connection in the backend — fire-and-forget.
-    // The backend upserts so calling this twice for the same pair is safe.
-    // Log to console.warn so failures are visible during development.
+    // Record the connection in the backend, then refresh backlinks + graph.
+    // Backend upserts so calling this twice for the same pair is safe.
     relationsApi.createLink(pageId, page.id)
+      .then(() => {
+        queryClient.invalidateQueries({ queryKey: ['backlinks', pageId] });
+        queryClient.invalidateQueries({ queryKey: ['workspace-graph', workspaceId] });
+      })
       .catch((err) => console.warn('Failed to create page link:', err));
-  }, [editor, workspaceId, pageId]);
+  }, [editor, workspaceId, pageId, queryClient]);
 
   // ── Hover card helpers ───────────────────────────────────────────────────
 

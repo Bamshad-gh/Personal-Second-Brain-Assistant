@@ -22,6 +22,13 @@
  *   - Edit options   — (select/multi only) opens OptionsBuilder to add/remove options
  *   - Delete         — removes the definition (and all its values via CASCADE)
  *
+ * Portal strategy:
+ *   Both the "Add property" popover and the "Edit options" popover are rendered
+ *   via createPortal to document.body so they escape overflow:hidden ancestors
+ *   (e.g. the canvas-mode flex container) and sit above TipTap stacking contexts.
+ *   Position is anchored via getBoundingClientRect() on the trigger element.
+ *   Mount guard uses useState+useEffect — never typeof document !== 'undefined'.
+ *
  * Color palette for options (auto-cycled by index):
  *   #3b82f6 blue | #22c55e green | #f59e0b yellow
  *   #ef4444 red  | #a855f7 purple | #06b6d4 cyan
@@ -30,6 +37,7 @@
 'use client';
 
 import { useState, useRef, useEffect } from 'react';
+import { createPortal }                from 'react-dom';
 import { Plus, MoreHorizontal, Trash2, Pencil, Settings } from 'lucide-react';
 import {
   usePropertyDefinitions,
@@ -39,7 +47,7 @@ import {
   useDeleteDefinition,
 } from '@/hooks/useProperties';
 import { PropertyValue } from './PropertyValue';
-import { DropdownMenu } from '@/components/ui/DropdownMenu';
+import { DropdownMenu }  from '@/components/ui/DropdownMenu';
 import type { PropType, SelectOption } from '@/types';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -47,9 +55,9 @@ import type { PropType, SelectOption } from '@/types';
 // ─────────────────────────────────────────────────────────────────────────────
 
 interface PropertyBarProps {
-  workspaceId:      string;
-  pageId:           string;
-  readOnly?:        boolean;
+  workspaceId:       string;
+  pageId:            string;
+  readOnly?:         boolean;
   customPageTypeId?: string | null;
 }
 
@@ -154,7 +162,11 @@ export function OptionsBuilder({ options, onChange }: OptionsBuilderProps) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 export function PropertyBar({ workspaceId, pageId, readOnly = false, customPageTypeId }: PropertyBarProps) {
-  // ── Data ────────────────────────────────────────────────────────────────
+
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  // DATA
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
   const { data: definitions = [] } = usePropertyDefinitions(workspaceId);
   const { data: values = [] }      = usePropertyValues(pageId);
 
@@ -162,7 +174,7 @@ export function PropertyBar({ workspaceId, pageId, readOnly = false, customPageT
   const updateDef = useUpdateDefinition(workspaceId);
   const deleteDef = useDeleteDefinition(workspaceId);
 
-  // ── Filter definitions to those relevant to this page's type ────────────
+  // Filter definitions to those relevant to this page's type.
   // Show a definition when:
   //   - it is marked global (appears on every page regardless of type), OR
   //   - a custom type is set and the definition is scoped to that type, OR
@@ -175,12 +187,29 @@ export function PropertyBar({ workspaceId, pageId, readOnly = false, customPageT
         : !def.custom_page_type),
   );
 
-  // ── "Add property" popover state ────────────────────────────────────────
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  // PORTAL MOUNT GUARD
+  // useState+useEffect only — never typeof document !== 'undefined'
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  const [mounted, setMounted] = useState(false);
+  // eslint-disable-next-line react-hooks/set-state-in-effect
+  useEffect(() => { setMounted(true); }, []);
+
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  // "ADD PROPERTY" POPOVER STATE
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
   const [addOpen,    setAddOpen]    = useState(false);
   const [pickedType, setPickedType] = useState<PropType | null>(null);
   const [newName,    setNewName]    = useState('');
   const [newOptions, setNewOptions] = useState<SelectOption[]>([]);
   const nameInputRef = useRef<HTMLInputElement>(null);
+
+  // Portal anchor + container refs
+  const addBtnRef    = useRef<HTMLButtonElement>(null);
+  const addPortalRef = useRef<HTMLDivElement>(null);
+  const [addPos, setAddPos] = useState({ top: 0, left: 0 });
 
   useEffect(() => {
     if (pickedType) nameInputRef.current?.focus();
@@ -209,7 +238,33 @@ export function PropertyBar({ workspaceId, pageId, readOnly = false, customPageT
     );
   }
 
-  // ── Rename state (inline on pill) ────────────────────────────────────────
+  // Click-outside — closes "Add property" popover when clicking outside both
+  // the trigger button and the portal div.
+  useEffect(() => {
+    if (!addOpen) return;
+    function onMouseDown(e: MouseEvent) {
+      if (addBtnRef.current?.contains(e.target as Node)) return;
+      if (addPortalRef.current?.contains(e.target as Node)) return;
+      closeAddPopover();
+    }
+    document.addEventListener('mousedown', onMouseDown);
+    return () => document.removeEventListener('mousedown', onMouseDown);
+  }, [addOpen]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Escape key — closes "Add property" popover
+  useEffect(() => {
+    if (!addOpen) return;
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key === 'Escape') closeAddPopover();
+    }
+    document.addEventListener('keydown', onKeyDown);
+    return () => document.removeEventListener('keydown', onKeyDown);
+  }, [addOpen]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  // RENAME STATE (inline on pill)
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameVal,  setRenameVal]  = useState('');
   const renameRef = useRef<HTMLInputElement>(null);
@@ -225,18 +280,56 @@ export function PropertyBar({ workspaceId, pageId, readOnly = false, customPageT
     setRenamingId(null);
   }
 
-  // ── "Edit options" popover state ─────────────────────────────────────────
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  // "EDIT OPTIONS" POPOVER STATE
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
   const [editingOptionsId, setEditingOptionsId] = useState<string | null>(null);
   const [editOptions,      setEditOptions]      = useState<SelectOption[]>([]);
 
-  // ── Render ───────────────────────────────────────────────────────────────
+  // pillRefs — Map<defId, HTMLElement> so we can anchor the "Edit options"
+  // portal to the pill that triggered it, even though the trigger fires from
+  // inside the DropdownMenu callback (which closes the dropdown first).
+  const pillRefs    = useRef<Map<string, HTMLElement>>(new Map());
+  const editPortalRef = useRef<HTMLDivElement>(null);
+  const [editPos, setEditPos] = useState({ top: 0, left: 0 });
+
+  // Click-outside — closes "Edit options" portal
+  useEffect(() => {
+    if (!editingOptionsId) return;
+    function onMouseDown(e: MouseEvent) {
+      if (editPortalRef.current?.contains(e.target as Node)) return;
+      setEditingOptionsId(null);
+    }
+    document.addEventListener('mousedown', onMouseDown);
+    return () => document.removeEventListener('mousedown', onMouseDown);
+  }, [editingOptionsId]);
+
+  // Escape key — closes "Edit options" portal
+  useEffect(() => {
+    if (!editingOptionsId) return;
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key === 'Escape') setEditingOptionsId(null);
+    }
+    document.addEventListener('keydown', onKeyDown);
+    return () => document.removeEventListener('keydown', onKeyDown);
+  }, [editingOptionsId]);
+
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  // RENDER
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
   if (visibleDefinitions.length === 0 && readOnly) return null;
+
+  // Resolve the definition being edited (for the portal content)
+  const editingDef = editingOptionsId
+    ? definitions.find((d) => d.id === editingOptionsId)
+    : null;
 
   return (
     <div className="mb-6 flex flex-wrap items-center gap-2">
 
-      {/* ── One pill per definition ─────────────────────────────────────── */}
+      {/* ── One pill per definition ──────────────────────────────────────── */}
       {visibleDefinitions.map((def) => {
         const val = values.find((v) => v.definition === def.id);
 
@@ -253,6 +346,12 @@ export function PropertyBar({ workspaceId, pageId, readOnly = false, customPageT
             onClick: () => {
               setEditingOptionsId(def.id);
               setEditOptions([...def.options]);
+              // Anchor the portal to the pill element
+              const pillEl = pillRefs.current.get(def.id);
+              if (pillEl) {
+                const r = pillEl.getBoundingClientRect();
+                setEditPos({ top: r.bottom + 4, left: r.left });
+              }
             },
           }] : []),
           {
@@ -264,9 +363,12 @@ export function PropertyBar({ workspaceId, pageId, readOnly = false, customPageT
         ];
 
         return (
-          // relative — anchors the "Edit options" popover
           <div
             key={def.id}
+            ref={(el) => {
+              if (el) pillRefs.current.set(def.id, el);
+              else    pillRefs.current.delete(def.id);
+            }}
             className="relative group flex items-center gap-1.5 rounded-full bg-neutral-800 pl-3 pr-1.5 py-1 text-xs text-neutral-300 hover:bg-neutral-700 transition-colors"
           >
             {/* Type icon */}
@@ -302,7 +404,7 @@ export function PropertyBar({ workspaceId, pageId, readOnly = false, customPageT
               readOnly={readOnly}
             />
 
-            {/* "..." menu */}
+            {/* "..." menu — already portaled by DropdownMenu */}
             {!readOnly && (
               <div onClick={(e) => e.stopPropagation()}>
                 <DropdownMenu items={menuItems}>
@@ -315,125 +417,146 @@ export function PropertyBar({ workspaceId, pageId, readOnly = false, customPageT
                 </DropdownMenu>
               </div>
             )}
-
-            {/* "Edit options" popover — anchored to this pill */}
-            {editingOptionsId === def.id && (
-              <div
-                className="absolute left-0 top-full mt-1 z-50 rounded-lg border border-neutral-700 bg-neutral-900 shadow-xl p-3 min-w-52"
-                onClick={(e) => e.stopPropagation()}
-              >
-                <p className="text-xs text-neutral-500 mb-2">Edit options</p>
-                <OptionsBuilder options={editOptions} onChange={setEditOptions} />
-                <div className="flex justify-between mt-3">
-                  <button
-                    onClick={() => setEditingOptionsId(null)}
-                    className="text-xs text-neutral-600 hover:text-neutral-400 transition-colors"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    onClick={() => {
-                      updateDef.mutate({ id: def.id, payload: { options: editOptions } });
-                      setEditingOptionsId(null);
-                    }}
-                    disabled={editOptions.length === 0 || updateDef.isPending}
-                    className="rounded bg-violet-600 px-3 py-1 text-xs text-white hover:bg-violet-500 disabled:opacity-40 transition-colors"
-                  >
-                    Save
-                  </button>
-                </div>
-              </div>
-            )}
           </div>
         );
       })}
 
-      {/* ── "Add property" button + popover ────────────────────────────── */}
+      {/* ── "Add property" button ────────────────────────────────────────── */}
       {!readOnly && (
-        <div className="relative">
-          <button
-            onClick={() => {
-              if (addOpen) {
-                closeAddPopover();
-              } else {
-                setAddOpen(true);
-              }
-            }}
-            className="flex items-center gap-1 text-xs text-neutral-600 hover:text-neutral-400 transition-colors"
-          >
-            <Plus size={12} />
-            Add property
-          </button>
+        <button
+          ref={addBtnRef}
+          onClick={() => {
+            if (addOpen) { closeAddPopover(); return; }
+            if (addBtnRef.current) {
+              const r = addBtnRef.current.getBoundingClientRect();
+              setAddPos({ top: r.bottom + 4, left: r.left });
+            }
+            setAddOpen(true);
+          }}
+          className="flex items-center gap-1 text-xs text-neutral-600 hover:text-neutral-400 transition-colors"
+        >
+          <Plus size={12} />
+          Add property
+        </button>
+      )}
 
-          {addOpen && (
-            <div className="absolute left-0 top-full mt-1 z-50 rounded-lg border border-neutral-700 bg-neutral-900 shadow-xl min-w-52">
-              {!pickedType ? (
-                // ── Step 1: pick type ─────────────────────────────────────
-                <div className="py-1">
-                  {PROP_TYPE_OPTIONS.map((opt) => (
-                    <button
-                      key={opt.type}
-                      onClick={() => setPickedType(opt.type)}
-                      className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-neutral-300 hover:bg-neutral-800 transition-colors"
-                    >
-                      <span className="w-4 text-center text-neutral-500">{opt.icon}</span>
-                      {opt.label}
-                    </button>
-                  ))}
-                </div>
-              ) : (
-                // ── Step 2: name (+ options for select/multi) ─────────────
-                <div className="p-3 flex flex-col gap-2">
-                  <p className="text-xs text-neutral-500">
-                    Name your {PROP_TYPE_OPTIONS.find((o) => o.type === pickedType)?.label} property
-                  </p>
+      {/* ── "Add property" portal ────────────────────────────────────────── */}
+      {addOpen && mounted && createPortal(
+        <div
+          ref={addPortalRef}
+          style={{
+            position: 'fixed',
+            top:      addPos.top,
+            left:     addPos.left,
+            zIndex:   'var(--z-popup)' as unknown as number,
+          }}
+          className="rounded-lg border border-neutral-700 bg-neutral-900 shadow-xl min-w-52 animate-fade-in"
+          onMouseDown={(e) => e.stopPropagation()}
+        >
+          {!pickedType ? (
+            // ── Step 1: pick type ─────────────────────────────────────────
+            <div className="py-1">
+              {PROP_TYPE_OPTIONS.map((opt) => (
+                <button
+                  key={opt.type}
+                  onClick={() => setPickedType(opt.type)}
+                  className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-neutral-300 hover:bg-neutral-800 transition-colors"
+                >
+                  <span className="w-4 text-center text-neutral-500">{opt.icon}</span>
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+          ) : (
+            // ── Step 2: name (+ options for select/multi) ──────────────────
+            <div className="p-3 flex flex-col gap-2">
+              <p className="text-xs text-neutral-500">
+                Name your {PROP_TYPE_OPTIONS.find((o) => o.type === pickedType)?.label} property
+              </p>
 
-                  <input
-                    ref={nameInputRef}
-                    value={newName}
-                    onChange={(e) => setNewName(e.target.value)}
-                    onKeyDown={(e) => {
-                      // Enter only submits for non-select types (select needs options first)
-                      if (e.key === 'Enter' && !isSelectType(pickedType)) handleAddProperty();
-                      if (e.key === 'Escape') closeAddPopover();
-                    }}
-                    placeholder="Property name"
-                    className="w-full rounded bg-neutral-800 px-2 py-1 text-xs text-neutral-200 outline-none border border-neutral-700 focus:border-violet-500 transition-colors"
-                  />
+              <input
+                ref={nameInputRef}
+                value={newName}
+                onChange={(e) => setNewName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !isSelectType(pickedType)) handleAddProperty();
+                  if (e.key === 'Escape') closeAddPopover();
+                }}
+                placeholder="Property name"
+                className="w-full rounded bg-neutral-800 px-2 py-1 text-xs text-neutral-200 outline-none border border-neutral-700 focus:border-violet-500 transition-colors"
+              />
 
-                  {/* Options builder — only for select / multi */}
-                  {isSelectType(pickedType) && (
-                    <>
-                      <p className="text-xs text-neutral-500 mt-1">Options</p>
-                      <OptionsBuilder options={newOptions} onChange={setNewOptions} />
-                    </>
-                  )}
-
-                  <div className="flex justify-between gap-2 mt-1">
-                    <button
-                      onClick={() => { setPickedType(null); setNewOptions([]); }}
-                      className="text-xs text-neutral-600 hover:text-neutral-400 transition-colors"
-                    >
-                      ← Back
-                    </button>
-                    <button
-                      onClick={handleAddProperty}
-                      disabled={
-                        !newName.trim() ||
-                        createDef.isPending ||
-                        (isSelectType(pickedType) && newOptions.length === 0)
-                      }
-                      className="rounded bg-violet-600 px-3 py-1 text-xs text-white hover:bg-violet-500 disabled:opacity-40 transition-colors"
-                    >
-                      {isSelectType(pickedType) ? 'Create property' : 'Add'}
-                    </button>
-                  </div>
-                </div>
+              {/* Options builder — only for select / multi */}
+              {isSelectType(pickedType) && (
+                <>
+                  <p className="text-xs text-neutral-500 mt-1">Options</p>
+                  <OptionsBuilder options={newOptions} onChange={setNewOptions} />
+                </>
               )}
+
+              <div className="flex justify-between gap-2 mt-1">
+                <button
+                  onClick={() => { setPickedType(null); setNewOptions([]); }}
+                  className="text-xs text-neutral-600 hover:text-neutral-400 transition-colors"
+                >
+                  ← Back
+                </button>
+                <button
+                  onClick={handleAddProperty}
+                  disabled={
+                    !newName.trim() ||
+                    createDef.isPending ||
+                    (isSelectType(pickedType) && newOptions.length === 0)
+                  }
+                  className="rounded bg-violet-600 px-3 py-1 text-xs text-white hover:bg-violet-500 disabled:opacity-40 transition-colors"
+                >
+                  {isSelectType(pickedType) ? 'Create property' : 'Add'}
+                </button>
+              </div>
             </div>
           )}
-        </div>
+        </div>,
+        document.body,
       )}
+
+      {/* ── "Edit options" portal ─────────────────────────────────────────── */}
+      {editingOptionsId && editingDef && mounted && createPortal(
+        <div
+          ref={editPortalRef}
+          style={{
+            position: 'fixed',
+            top:      editPos.top,
+            left:     editPos.left,
+            zIndex:   'var(--z-popup)' as unknown as number,
+          }}
+          className="rounded-lg border border-neutral-700 bg-neutral-900 shadow-xl p-3 min-w-52 animate-fade-in"
+          onMouseDown={(e) => e.stopPropagation()}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <p className="text-xs text-neutral-500 mb-2">Edit options</p>
+          <OptionsBuilder options={editOptions} onChange={setEditOptions} />
+          <div className="flex justify-between mt-3">
+            <button
+              onClick={() => setEditingOptionsId(null)}
+              className="text-xs text-neutral-600 hover:text-neutral-400 transition-colors"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={() => {
+                updateDef.mutate({ id: editingOptionsId, payload: { options: editOptions } });
+                setEditingOptionsId(null);
+              }}
+              disabled={editOptions.length === 0 || updateDef.isPending}
+              className="rounded bg-violet-600 px-3 py-1 text-xs text-white hover:bg-violet-500 disabled:opacity-40 transition-colors"
+            >
+              Save
+            </button>
+          </div>
+        </div>,
+        document.body,
+      )}
+
     </div>
   );
 }

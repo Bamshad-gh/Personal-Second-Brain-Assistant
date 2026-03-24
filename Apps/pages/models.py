@@ -31,6 +31,12 @@ class Page(EncryptableMixin, AIPermissionMixin, BaseModel):
         DOCUMENT = 'document', 'Document'
         CANVAS   = 'canvas',   'Canvas'
 
+    class ColorStyle(models.TextChoices):
+        NONE   = 'none',   'No color'
+        ACCENT = 'accent', 'Accent line only'
+        TINT   = 'tint',   'Background tint only'
+        BOTH   = 'both',   'Accent line + background tint'
+
     # ── Relations ─────────────────────────────────────────────
     workspace  = models.ForeignKey(
         'workspaces.Workspace',
@@ -62,8 +68,24 @@ class Page(EncryptableMixin, AIPermissionMixin, BaseModel):
     view_mode  = models.CharField(max_length=20, choices=ViewMode.choices, default=ViewMode.DOCUMENT)
     title      = models.CharField(max_length=500, default='Untitled')
     icon       = models.CharField(max_length=10, blank=True)
-    header_pic = models.ImageField(upload_to='page_headers/', blank=True, null=True)
+    header_pic     = models.ImageField(upload_to='page_headers/', blank=True, null=True)
+    # URL-based cover (gallery picks, external URLs, Unsplash).
+    # Resolved on the frontend: header_pic_url takes priority over header_pic file.
+    header_pic_url = models.URLField(blank=True, default='')
     is_pinned  = models.BooleanField(default=False)
+    # color: per-page hex accent. Empty string = "use type default".
+    # Frontend resolves: page.color || type.default_color || '#7c3aed'
+    color       = models.CharField(max_length=20, default='', blank=True)
+    # color_style: controls where the page color is applied in the content area.
+    #   'none'   → color only shown in sidebar/graph, not in the page itself
+    #   'accent' → thin colored line below the page title
+    #   'tint'   → very faint background tint on the content area (~3% opacity)
+    #   'both'   → accent line + background tint (default)
+    color_style = models.CharField(
+        max_length=10,
+        choices=ColorStyle.choices,
+        default=ColorStyle.BOTH,
+    )
 
     class Meta:
         ordering = ['-updated_at']

@@ -10,6 +10,7 @@ from django.shortcuts import get_object_or_404
 from django.db import transaction
 
 from .models import Workspace
+from .seeder import seed_workspace_templates
 from .serializers import (
     WorkspaceSerializer,
     WorkspaceCreateSerializer,
@@ -146,3 +147,31 @@ class WorkspaceStatsView(APIView):
             'total_blocks': total_blocks,
             'storage_used_mb': float(workspace.storage_used_mb),
         })
+
+
+class SeedTemplatesView(APIView):
+    """
+    POST /api/workspaces/{pk}/seed-templates/
+
+    Idempotent endpoint — seeds the built-in CLIENT, PROJECT, and INVOICE
+    page types into the workspace.  Safe to call multiple times; already-
+    existing types are never overwritten or duplicated.
+
+    Returns a list of {"name": str, "created": bool} — one entry per
+    template, so the caller can see which ones were newly created vs skipped.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, pk):
+        # 404 (not 403) when the workspace does not belong to this user
+        workspace = get_object_or_404(
+            Workspace,
+            pk=pk,
+            owner=request.user,
+            is_deleted=False,
+        )
+
+        results = seed_workspace_templates(workspace)
+
+        return Response({"seeded": results}, status=status.HTTP_200_OK)

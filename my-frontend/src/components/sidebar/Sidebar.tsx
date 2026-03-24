@@ -12,20 +12,20 @@
  * How to expand:
  *   - Add a search/command palette trigger at the top
  *   - Add a pinned pages section
- *   - Add settings link at the bottom
  *   - Add sidebar resize by dragging the right edge
  */
 
 'use client';
 
 import { useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useRouter } from 'next/navigation';
 import { usePathname } from 'next/navigation';
-import { Plus, LogOut, Settings, PanelLeftClose, Layers } from 'lucide-react';
+import { Plus, LogOut, Settings, PanelLeftClose, Layers, Network, Trash2 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useQuery } from '@tanstack/react-query';
 import { useAppStore } from '@/lib/store';
-import { useWorkspaces, useWorkspace } from '@/hooks/useWorkspace';
+import { useWorkspaces, useWorkspace, useDeleteWorkspace } from '@/hooks/useWorkspace';
 import { usePages, useCreatePage, useDeletePage, useUpdatePage } from '@/hooks/usePages';
 import { useCustomPageTypes } from '@/hooks/useCustomPageTypes';
 import { authApi, aiApi } from '@/lib/api';
@@ -66,9 +66,10 @@ export function Sidebar({ workspaceId, activePageId }: SidebarProps) {
   const { data: workspaceData } = useWorkspace(workspaceId);
   const { data: pages = [], isLoading: pagesLoading } = usePages(workspaceId);
   const { data: customTypes = [] } = useCustomPageTypes(workspaceId);
-  const createPage = useCreatePage(workspaceId);
-  const deletePage = useDeletePage(workspaceId);
-  const updatePage = useUpdatePage(workspaceId);
+  const createPage      = useCreatePage(workspaceId);
+  const deletePage      = useDeletePage(workspaceId);
+  const updatePage      = useUpdatePage(workspaceId);
+  const deleteWorkspace = useDeleteWorkspace();
   const { data: aiUsage } = useQuery({
     queryKey: ['ai-usage'],
     queryFn: () => aiApi.getUsage(),
@@ -77,6 +78,15 @@ export function Sidebar({ workspaceId, activePageId }: SidebarProps) {
 
   // ── Custom type manager popover state ─────────────────────────────────────
   const [customTypeManagerOpen, setCustomTypeManagerOpen] = useState(false);
+
+  // ── Delete workspace modal state ───────────────────────────────────────────
+  const [mounted,       setMounted]       = useState(false);
+  const [deleteModalOpen, setDeleteModalOpen] = useState(false);
+  const [confirmName,   setConfirmName]   = useState('');
+  const [deleting,      setDeleting]      = useState(false);
+
+  // Portal mount guard — never use typeof document !== 'undefined'
+  useEffect(() => { setMounted(true); }, []);
 
   // Sync the workspace data into Zustand when it loads
   useEffect(() => {
@@ -141,6 +151,36 @@ export function Sidebar({ workspaceId, activePageId }: SidebarProps) {
     }
   }
 
+  /** Delete the current workspace after double-confirmation */
+  async function handleDeleteWorkspace() {
+    if (confirmName !== workspaceData?.name) return;
+    setDeleting(true);
+    try {
+      await deleteWorkspace.mutateAsync(workspaceId);
+      setDeleteModalOpen(false);
+      router.push('/');
+    } catch {
+      toast.error('Could not delete workspace. Please try again.');
+    } finally {
+      setDeleting(false);
+    }
+  }
+
+  function openDeleteModal() {
+    setConfirmName('');
+    setDeleteModalOpen(true);
+  }
+
+  // ── Settings dropdown items ────────────────────────────────────────────────
+  const settingsMenuItems = [
+    {
+      label:   'Delete workspace',
+      icon:    <Trash2 size={13} />,
+      variant: 'danger' as const,
+      onClick: openDeleteModal,
+    },
+  ];
+
   // ── "New page" dropdown items ─────────────────────────────────────────────
   const newPageMenuItems = [
     {
@@ -158,6 +198,7 @@ export function Sidebar({ workspaceId, activePageId }: SidebarProps) {
 
   // ── The workspace to display ──────────────────────────────────────────────
   const displayWorkspace = activeWorkspace ?? workspaceData;
+  const isGraphActive    = pathname === `/${workspaceId}/graph`;
 
   // ── Render ────────────────────────────────────────────────────────────────
 
@@ -232,11 +273,29 @@ export function Sidebar({ workspaceId, activePageId }: SidebarProps) {
               pages={pages}
               activePageId={activePageId}
               workspaceId={workspaceId}
+              customTypes={customTypes}
               onCreatePage={handleCreatePage}
               onUpdatePage={handleUpdatePage}
               onDeletePage={handleDeletePage}
             />
           )}
+        </div>
+
+        {/* ── Knowledge Graph link ───────────────────────────────────────── */}
+        <div className="mx-2 mb-1">
+          <button
+            onClick={() => router.push(`/${workspaceId}/graph`)}
+            className={[
+              'flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-xs transition-colors',
+              isGraphActive
+                ? 'bg-violet-900/30 text-violet-400'
+                : 'text-neutral-600 hover:bg-neutral-800 hover:text-neutral-400',
+            ].join(' ')}
+            title="Knowledge Graph"
+          >
+            <Network size={13} />
+            <span>Knowledge Graph</span>
+          </button>
         </div>
 
         {/* ── Footer: user + settings ────────────────────────────────────── */}
@@ -269,13 +328,15 @@ export function Sidebar({ workspaceId, activePageId }: SidebarProps) {
               </p>
             </div>
 
-            {/* Settings button */}
-            <button
-              className="flex h-6 w-6 items-center justify-center rounded text-neutral-600 hover:bg-neutral-700 hover:text-neutral-300 transition-colors"
-              title="Settings (coming soon)"
-            >
-              <Settings size={13} />
-            </button>
+            {/* Settings dropdown — contains workspace management actions */}
+            <DropdownMenu items={settingsMenuItems} placement="left">
+              <button
+                className="flex h-6 w-6 items-center justify-center rounded text-neutral-600 hover:bg-neutral-700 hover:text-neutral-300 transition-colors"
+                title="Workspace settings"
+              >
+                <Settings size={13} />
+              </button>
+            </DropdownMenu>
 
             {/* Page type manager toggle */}
             <button
@@ -305,6 +366,76 @@ export function Sidebar({ workspaceId, activePageId }: SidebarProps) {
           </div>
         </div>
       </aside>
+
+      {/* ── Delete workspace modal (portal) ──────────────────────────────── */}
+      {deleteModalOpen && mounted && createPortal(
+        <div
+          className="fixed inset-0 z-99999 flex items-center justify-center"
+          onMouseDown={(e) => { if (e.target === e.currentTarget) setDeleteModalOpen(false); }}
+        >
+          {/* Backdrop */}
+          <div className="absolute inset-0 bg-black/70" />
+
+          {/* Modal */}
+          <div className="relative z-10 w-full max-w-md rounded-xl border border-neutral-700 bg-neutral-900 p-6 shadow-2xl mx-4">
+
+            {/* Icon + title */}
+            <div className="flex items-center gap-3 mb-4">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-red-900/30">
+                <Trash2 size={18} className="text-red-400" />
+              </div>
+              <div>
+                <h2 className="text-sm font-semibold text-neutral-100">Delete workspace</h2>
+                <p className="text-xs text-neutral-500 mt-0.5">
+                  {workspaceData?.name ?? 'This workspace'}
+                </p>
+              </div>
+            </div>
+
+            {/* Warning */}
+            <p className="text-xs text-neutral-400 leading-relaxed mb-5">
+              This will permanently delete all pages, blocks and data in this
+              workspace. <span className="text-red-400 font-medium">This cannot be undone.</span>
+            </p>
+
+            {/* Confirmation input */}
+            <div className="mb-5">
+              <label className="block text-xs text-neutral-500 mb-1.5">
+                Type <span className="font-semibold text-neutral-300">{workspaceData?.name}</span> to confirm
+              </label>
+              <input
+                value={confirmName}
+                onChange={(e) => setConfirmName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && confirmName === workspaceData?.name) handleDeleteWorkspace();
+                  if (e.key === 'Escape') setDeleteModalOpen(false);
+                }}
+                placeholder="Workspace name"
+                autoFocus
+                className="w-full rounded-lg bg-neutral-800 border border-neutral-700 px-3 py-2 text-sm text-neutral-200 placeholder-neutral-600 outline-none focus:border-red-500 transition-colors"
+              />
+            </div>
+
+            {/* Actions */}
+            <div className="flex justify-end gap-2">
+              <button
+                onClick={() => setDeleteModalOpen(false)}
+                className="rounded-lg px-4 py-2 text-xs text-neutral-400 hover:bg-neutral-800 hover:text-neutral-200 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleDeleteWorkspace}
+                disabled={confirmName !== workspaceData?.name || deleting}
+                className="rounded-lg bg-red-600 px-4 py-2 text-xs font-medium text-white hover:bg-red-500 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+              >
+                {deleting ? 'Deleting…' : 'Delete workspace'}
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body,
+      )}
     </>
   );
 }

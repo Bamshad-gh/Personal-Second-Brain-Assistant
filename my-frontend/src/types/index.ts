@@ -223,11 +223,14 @@ export interface Page {
   is_locked: boolean;
   updated_at: string;
   custom_page_type?: string | null;  // CustomPageType UUID
+  color?: string;          // per-page hex accent; '' means "use type default"
+  color_style?: 'none' | 'accent' | 'tint' | 'both';  // where color appears in the page; default 'both'
   // Detail-only / write-response fields:
   workspace?: string;      // workspace UUID
   created_by?: string;     // user UUID
   view_mode?: ViewMode;
-  header_pic?: string | null;
+  header_pic?: string | null;     // relative path to uploaded file (e.g. "page_headers/abc.jpg")
+  header_pic_url?: string;        // external or gallery URL; takes priority over header_pic
   enc_tier?: EncTier;
   ai_consent?: AiConsent;
   created_at?: string;
@@ -336,7 +339,10 @@ export interface CreatePagePayload {
 export interface UpdatePagePayload {
   title?: string;
   icon?: string;
+  color?: string;           // hex accent; send '' to reset to type default
+  color_style?: 'none' | 'accent' | 'tint' | 'both';
   header_pic?: string | null;
+  header_pic_url?: string;        // send '' to clear; send URL string to set gallery/external cover
   is_pinned?: boolean;
   parent?: string | null;
   page_type?: PageType;
@@ -435,6 +441,24 @@ export interface Connection {
 }
 
 /**
+ * BlockConnection — a canvas arrow between two blocks.
+ * Stored as a Connection row with conn_type='block_link'.
+ *
+ * Returned by: GET /api/relations/block-connections/?page={id}
+ */
+export interface BlockConnection {
+  id:           string;           // UUID
+  conn_type:    'block_link';
+  source_block: string;           // block UUID
+  target_block: string;           // block UUID
+  arrow_type:   'link' | 'flow';  // 'flow' renders animated dashed blue arrow
+  direction:    'directed' | 'undirected'; // 'directed' shows arrowhead
+  label:        string;           // optional display label on the arrow
+  is_deleted:   boolean;
+  created_at:   string;           // ISO 8601
+}
+
+/**
  * BacklinkPage — one item in the backlinks panel.
  * A flat summary of a Connection, shaped for display (no extra joins needed).
  *
@@ -445,6 +469,42 @@ export interface BacklinkPage {
   source_page_id: string;            // UUID of the page that links here
   source_page_title: string;         // title to display in the backlinks panel
   source_page_workspace_id: string;  // workspace UUID — used to build the nav URL
+}
+
+/**
+ * GraphNode — one node in the workspace knowledge graph.
+ * Represents a single non-deleted page in the workspace.
+ *
+ * color is the resolved effective color (never null/empty):
+ *   page.color || type.default_color || '#7c3aed'
+ * Resolved server-side in WorkspaceGraphView so the frontend never has to
+ * apply the fallback chain itself.
+ *
+ * Returned by: GET /api/relations/workspace/{id}/graph/  (inside "nodes")
+ */
+export interface GraphNode {
+  id:               string;          // page UUID
+  title:            string;
+  icon:             string;          // resolved effective emoji
+  color:            string;          // resolved effective hex color (never empty)
+  custom_page_type: string | null;   // CustomPageType UUID, or null
+}
+
+/**
+ * GraphEdge — one directed edge in the workspace knowledge graph.
+ * Represents a PAGE_LINK Connection between two pages.
+ *
+ * type values:
+ *   'page_link' — a manual [[link]] inserted by the user
+ *   'parent'    — auto-created when a child page is created (parent → child)
+ *   'child'     — auto-created when a child page is created (child → parent)
+ *
+ * Returned by: GET /api/relations/workspace/{id}/graph/  (inside "edges")
+ */
+export interface GraphEdge {
+  source: string;   // source page UUID
+  target: string;   // target page UUID
+  type:   string;   // 'page_link' | 'parent' | 'child'
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -506,17 +566,57 @@ export interface PropertyValue {
 }
 
 /**
+ * PageTypeGroup — mirrors properties.PageTypeGroup model.
+ * A named, coloured bucket that organises CustomPageTypes in the sidebar
+ * and in the CustomPageTypeManager panel.
+ *
+ * Returned by: GET /api/properties/groups/?workspace=<id>
+ */
+export interface PageTypeGroup {
+  id:         string;   // UUID
+  workspace:  string;   // workspace UUID
+  name:       string;
+  color:      string;   // hex color string, e.g. '#60a5fa'
+  order:      number;
+  created_at: string;   // ISO 8601
+}
+
+/**
  * CustomPageType — mirrors properties.CustomPageType model.
  * A user-defined page category with its own scoped PropertyDefinitions.
+ *
+ * group      — FK UUID for write operations (send the group id to assign/unassign)
+ * group_detail — full nested PageTypeGroup object returned on read (null if ungrouped)
+ * is_pinned  — controls sidebar picker visibility (true = show in picker)
  *
  * Returned by: GET /api/properties/custom-types/?workspace=<id>
  */
 export interface CustomPageType {
-  id:          string;
-  workspace:   string;
-  name:        string;
-  icon:        string;
-  description: string;
+  id:            string;
+  workspace:     string;
+  name:          string;
+  icon:          string;
+  description:   string;
+  group:         string | null;            // PageTypeGroup UUID (write FK)
+  group_detail:  PageTypeGroup | null;     // nested group object (read only)
+  is_pinned:     boolean;
+  default_color: string;                   // hex accent for graph nodes + page header
+  default_icon:  string;                   // emoji shown in graph node + sidebar
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GALLERY — curated cover images served from media/gallery/
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * GalleryImage — one item from GET /api/pages/gallery/
+ * Represents a curated cover image available for all pages.
+ * credit is empty string by default; admins can add metadata later.
+ */
+export interface GalleryImage {
+  id:     string;   // filename, e.g. "gallery_01.jpg"
+  url:    string;   // absolute URL served from media/gallery/
+  credit: string;   // photographer credit (empty string if not set)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -25,6 +25,16 @@
   --gradient-violet-subtle: linear-gradient(135deg, #7c3aed22 0%, #a855f722 100%);
 }
 
+/* ── Z-index scale ───────────────────────────────────────────────────────────
+   Named tokens so every portal / overlay uses a consistent value and can be
+   reasoned about without hunting for magic numbers in component files.
+   --z-popup sits above canvas blocks (canvas_z is unrestricted), TipTap
+   stacking contexts, and any overflow:hidden clip hierarchy.
+   ─────────────────────────────────────────────────────────────────────────── */
+:root {
+  --z-popup: 99999;
+}
+
 /* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
    2. CORE & BASE RESETS
    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */

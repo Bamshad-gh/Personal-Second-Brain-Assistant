@@ -25,7 +25,10 @@ class PageSerializer(serializers.ModelSerializer):
             'view_mode',
             'title',
             'icon',
+            'color',
+            'color_style',
             'header_pic',
+            'header_pic_url',
             'is_pinned',
             'children_count',
             'block_count',
@@ -70,11 +73,17 @@ class PageCreateSerializer(serializers.ModelSerializer):
 class PageUpdateSerializer(serializers.ModelSerializer):
     """
     Serializer for updating page details.
+    header_pic_url accepts an external URL or gallery URL string;
+    header_pic (file upload) is handled separately via PageCoverView.
     """
 
     class Meta:
         model = Page
-        fields = ['title', 'icon', 'header_pic', 'is_pinned', 'parent', 'custom_page_type', 'page_type', 'view_mode']
+        fields = [
+            'title', 'icon', 'color', 'color_style',
+            'header_pic', 'header_pic_url',
+            'is_pinned', 'parent', 'custom_page_type', 'page_type', 'view_mode',
+        ]
 
     def validate_parent(self, value):
         """Prevent making page a child of itself."""
@@ -131,6 +140,10 @@ class PageListSerializer(serializers.ModelSerializer):
             'id',
             'title',
             'icon',
+            'color',
+            'color_style',
+            'header_pic',
+            'header_pic_url',
             'page_type',
             'custom_page_type',
             'parent',
@@ -157,7 +170,10 @@ class PageWithBlocksSerializer(serializers.ModelSerializer):
             'view_mode',
             'title',
             'icon',
+            'color',
+            'color_style',
             'header_pic',
+            'header_pic_url',
             'is_pinned',
             'is_locked',
             'enc_tier',

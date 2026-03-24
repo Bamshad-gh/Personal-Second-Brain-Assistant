@@ -27,19 +27,18 @@
  *   → Copy link — navigator.clipboard
  *   → Delete    — confirm in-dropdown → DELETE + navigate to workspace
  *
- * Backlinks panel (document mode only): shown below the editor when
- * other pages link here.
- *   → Backend:  GET /api/relations/pages/{id}/backlinks/
- *   → API call: pageApi.backlinks(pageId) in lib/api.ts
- *   → Component: BacklinksPanel (defined at the bottom of this file)
+ * Bottom tab bar (document mode only): sticky bottom bar with "Linked Pages"
+ * and "Canvas Blocks" tabs. Rendered by BottomTabBar component.
+ *   → Backlinks backend: GET /api/relations/pages/{id}/backlinks/
+ *   → Component: src/components/editor/BottomTabBar.tsx
  */
 
 'use client';
 
 import { useParams, useRouter }                       from 'next/navigation';
-import Link                                           from 'next/link';
 import { useState, useEffect, useCallback, useRef }   from 'react';
-import { ArrowLeft, Lock, Sparkles, Link2,
+import { createPortal }                               from 'react-dom';
+import { ArrowLeft, Lock, Sparkles,
          MoreHorizontal, Pencil, Files, Copy, Trash2,
          LayoutDashboard, FileText, Layers }           from 'lucide-react';
 import toast                                          from 'react-hot-toast';
@@ -55,7 +54,53 @@ import { AiPanel }                                    from '@/components/ai/AiPa
 import { DropdownMenu }                               from '@/components/ui/DropdownMenu';
 import { PropertyBar }                                from '@/components/properties/PropertyBar';
 import { CanvasView }                                 from '@/components/canvas/CanvasView';
+import { PageCover }                                  from '@/components/editor/PageCover';
+import { BottomTabBar }                               from '@/components/editor/BottomTabBar';
 import type { BacklinkPage }                          from '@/types';
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Constants — icon picker + color picker
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** ~80 common emojis for the icon picker, grouped loosely by category. */
+const EMOJI_LIST = [
+  // Documents & work
+  '📄','📝','📋','📊','📈','📉','🗒','📅','📌','📍','🗂','📁','📂','🗃',
+  // People & communication
+  '🤝','👤','👥','💬','📧','📞','☎','📱','💌','🎤',
+  // Business & finance
+  '💼','🏢','💰','💵','🧾','🪙','📦','🚀','⚡','🔑',
+  // Nature & symbols
+  '🌟','⭐','✨','🎯','🏆','🥇','🎖','🏅','🎗','🔥',
+  // Objects & tools
+  '🛠','⚙','🔧','🔨','💡','🔍','🔎','📡','🧲','🖥',
+  // Art & creativity
+  '🎨','✏','🖊','🖋','🎭','🎬','🎵','🎶','📸','🖼',
+  // Nature
+  '🌱','🌿','🍀','🌸','🌺','🌻','🌊','🏔','🌙','☀',
+  // Misc
+  '❤','💙','💚','💛','🧡','💜','🖤','🤍','💎','🎁',
+];
+
+/** 12 colour swatches for the page colour picker. */
+const COLOR_SWATCHES = [
+  '#7c3aed', // violet (default)
+  '#60a5fa', // blue
+  '#34d399', // green
+  '#f59e0b', // amber
+  '#f87171', // red
+  '#a78bfa', // purple
+  '#fb923c', // orange
+  '#4ade80', // emerald
+  '#38bdf8', // sky
+  '#e879f9', // pink
+  '#94a3b8', // slate
+  '#1e293b', // dark
+];
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Helpers
+// ─────────────────────────────────────────────────────────────────────────────
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Page component
@@ -135,11 +180,126 @@ export default function PageEditorRoute() {
   // When true, the dropdown shows a delete confirmation instead of normal items.
   const [confirmingDelete, setConfirmingDelete] = useState(false);
 
-  // ── Change type inline picker ────────────────────────────────────────────
-  const [changingType, setChangingType] = useState(false);
+  // ── Type picker portal ───────────────────────────────────────────────────
+  const [mounted, setMounted]                   = useState(false);
+  useEffect(() => { setMounted(true); }, []);
+  const typeBadgeRef                            = useRef<HTMLButtonElement>(null);
+  const typePortalRef                           = useRef<HTMLDivElement>(null);
+  const [typePickerOpen, setTypePickerOpen]     = useState(false);
+  const [typePickerPos, setTypePickerPos]       = useState({ top: 0, left: 0 });
+
+  function openTypePicker() {
+    const anchor = typeBadgeRef.current;
+    if (anchor) {
+      const r = anchor.getBoundingClientRect();
+      setTypePickerPos({ top: r.bottom + 4, left: r.left });
+    } else {
+      // No badge visible (page has no type) — position near top of content area
+      setTypePickerPos({ top: 120, left: 320 });
+    }
+    setTypePickerOpen(true);
+  }
+
+  useEffect(() => {
+    if (!typePickerOpen) return;
+    function onMouseDown(e: MouseEvent) {
+      if (typeBadgeRef.current?.contains(e.target as Node)) return;
+      if (typePortalRef.current?.contains(e.target as Node)) return;
+      setTypePickerOpen(false);
+    }
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key === 'Escape') setTypePickerOpen(false);
+    }
+    document.addEventListener('mousedown', onMouseDown);
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', onMouseDown);
+      document.removeEventListener('keydown', onKeyDown);
+    };
+  }, [typePickerOpen]);
+
+  // ── Icon picker portal ───────────────────────────────────────────────────
+  const iconBtnRef                            = useRef<HTMLButtonElement>(null);
+  const iconPortalRef                         = useRef<HTMLDivElement>(null);
+  const [iconPickerOpen, setIconPickerOpen]   = useState(false);
+  const [iconPickerPos, setIconPickerPos]     = useState({ top: 0, left: 0 });
+  const [iconSearch, setIconSearch]           = useState('');
+
+  function openIconPicker() {
+    if (iconBtnRef.current) {
+      const r = iconBtnRef.current.getBoundingClientRect();
+      setIconPickerPos({ top: r.bottom + 6, left: r.left });
+    }
+    setIconSearch('');
+    setIconPickerOpen(true);
+  }
+
+  useEffect(() => {
+    if (!iconPickerOpen) return;
+    function onMouseDown(e: MouseEvent) {
+      if (iconBtnRef.current?.contains(e.target as Node)) return;
+      if (iconPortalRef.current?.contains(e.target as Node)) return;
+      setIconPickerOpen(false);
+    }
+    function onKeyDown(e: KeyboardEvent) { if (e.key === 'Escape') setIconPickerOpen(false); }
+    document.addEventListener('mousedown', onMouseDown);
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', onMouseDown);
+      document.removeEventListener('keydown', onKeyDown);
+    };
+  }, [iconPickerOpen]);
+
+  // ── Color picker portal ──────────────────────────────────────────────────
+  const colorBtnRef                             = useRef<HTMLButtonElement>(null);
+  const colorPortalRef                          = useRef<HTMLDivElement>(null);
+  const [colorPickerOpen, setColorPickerOpen]   = useState(false);
+  const [colorPickerPos, setColorPickerPos]     = useState({ top: 0, left: 0 });
+
+  function openColorPicker() {
+    if (colorBtnRef.current) {
+      const r = colorBtnRef.current.getBoundingClientRect();
+      setColorPickerPos({ top: r.bottom + 6, left: r.left });
+    }
+    setColorPickerOpen(true);
+  }
+
+  useEffect(() => {
+    if (!colorPickerOpen) return;
+    function onMouseDown(e: MouseEvent) {
+      if (colorBtnRef.current?.contains(e.target as Node)) return;
+      if (colorPortalRef.current?.contains(e.target as Node)) return;
+      setColorPickerOpen(false);
+    }
+    function onKeyDown(e: KeyboardEvent) { if (e.key === 'Escape') setColorPickerOpen(false); }
+    document.addEventListener('mousedown', onMouseDown);
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', onMouseDown);
+      document.removeEventListener('keydown', onKeyDown);
+    };
+  }, [colorPickerOpen]);
 
   // ── Track editor plain text (for AI context — document mode only) ────────
   const [editorText, setEditorText] = useState('');
+
+  // ── Backlinks (for bottom tab bar) ──────────────────────────────────────
+  const { data: backlinks = [] } = useQuery<BacklinkPage[]>({
+    queryKey:  ['backlinks', pageId],
+    queryFn:   () => pageApi.backlinks(pageId),
+    enabled:   !!pageId,
+    staleTime: 1000 * 5, // connections sync on every save — keep data fresh
+  });
+
+  // ── Local cover URL override + cover expanded state ──────────────────────
+  const [localCoverUrl, setLocalCoverUrl] = useState<string | null>(null);
+  const [coverExpanded, setCoverExpanded] = useState(false);
+
+  // Reset local cover override when navigating to a different page
+  useEffect(() => { setLocalCoverUrl(null); }, [pageId]);
+
+  // Collapse cover whenever we leave canvas mode
+  useEffect(() => { if (page?.view_mode !== 'canvas') setCoverExpanded(false); }, [page?.view_mode]);
 
   // ── Find the main content block (document mode autosave) ────────────────
   // canvas_x === null guards against canvas text blocks contaminating the document editor
@@ -164,11 +324,14 @@ export default function PageEditorRoute() {
             order:      1,
           });
         }
+        // Backend sync_page_links ran — refresh backlinks panel + knowledge graph
+        queryClient.invalidateQueries({ queryKey: ['backlinks', pageId] });
+        queryClient.invalidateQueries({ queryKey: ['workspace-graph', workspaceId] });
       } catch {
         toast.error('Auto-save failed. Your changes may not be saved.');
       }
     },
-    [contentBlock, updateBlock, createBlock],
+    [contentBlock, updateBlock, createBlock, queryClient, pageId, workspaceId],
   );
 
   // ── Extract initial TipTap JSON (document mode) ─────────────────────────
@@ -209,6 +372,31 @@ export default function PageEditorRoute() {
 
   // ── Derived: current custom type (for badge + type picker) ───────────────
   const currentType = customTypes.find((t) => t.id === page.custom_page_type) ?? null;
+
+  // ── Derived: effective accent color ──────────────────────────────────────
+  // Fallback chain: page override → type default → violet
+  const effectiveColor = page.color || currentType?.default_color || '#7c3aed';
+
+  // ── Derived: color_style helpers ─────────────────────────────────────────
+  const colorStyle  = page.color_style ?? 'both';
+  const showAccent  = colorStyle === 'accent' || colorStyle === 'both';
+  const showTint    = colorStyle === 'tint'   || colorStyle === 'both';
+
+  // ── Derived: cover URL ────────────────────────────────────────────────────
+  // header_pic_url (gallery/URL picks) takes priority over uploaded header_pic file.
+  // Trim header_pic_url — rejects stale blank-space placeholder values from DB.
+  // header_pic may be a relative path (/media/...) or already absolute; handle both.
+  const rawPic  = page.header_pic;
+  const picUrl  = rawPic
+    ? rawPic.startsWith('http')
+      ? rawPic
+      : `${process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000'}${rawPic}`
+    : null;
+  const coverUrl: string | null =
+    localCoverUrl
+    ?? ((page.header_pic_url && page.header_pic_url.trim())
+      ? page.header_pic_url.trim()
+      : picUrl);
 
   // ── Page options dropdown items ──────────────────────────────────────────
   //
@@ -260,7 +448,7 @@ export default function PageEditorRoute() {
         {
           label:   'Change type',
           icon:    <Layers size={13} />,
-          onClick: () => setChangingType((v) => !v),
+          onClick: openTypePicker,
         },
         {
           label:   'Delete',
@@ -273,19 +461,34 @@ export default function PageEditorRoute() {
   // ── Render ──────────────────────────────────────────────────────────────
 
   return (
-    // Outer flex row: main content column + optional AI panel
+    <>
+    {/* Outer flex row: main content column + optional AI panel */}
     <div className="flex h-full">
 
       {/* ── Main column ────────────────────────────────────────────────────
           In document mode: overflow-y-auto (scrollable)
           In canvas  mode:  overflow-hidden + flex-col (canvas fills remaining height) */}
-      <div className={[
-        'flex-1',
-        isCanvas ? 'overflow-hidden flex flex-col' : 'overflow-y-auto',
-      ].join(' ')}>
+      <div
+        className={[
+          'flex-1',
+          isCanvas ? 'overflow-hidden flex flex-col' : 'overflow-y-auto',
+        ].join(' ')}
+        style={showTint ? { backgroundColor: `${effectiveColor}08` } : undefined}
+      >
+
+        {/* ── Cover image banner — full-width, above the header ──────────── */}
+        <PageCover
+          pageId={pageId}
+          workspaceId={workspaceId}
+          coverUrl={coverUrl}
+          readOnly={page.is_locked}
+          onCoverChange={setLocalCoverUrl}
+          collapsed={isCanvas && !coverExpanded}
+          onExpandRequest={() => setCoverExpanded(true)}
+        />
 
         {/* ── Header section — always constrained to max-w-3xl ─────────── */}
-        <div className="mx-auto w-full max-w-3xl px-6 pt-10 animate-fade-in">
+        <div className={`mx-auto w-full max-w-3xl px-6 ${coverUrl ? 'pt-6' : 'pt-10'} animate-fade-in`}>
 
           {/* Top bar */}
           <div className="mb-8 flex items-center gap-3">
@@ -325,6 +528,31 @@ export default function PageEditorRoute() {
                 <Sparkles size={13} />
                 AI
               </button>
+
+              {/* Sync to canvas — toggles canvas_visible on the document content block */}
+              {contentBlock && (
+                <button
+                  onClick={() => updateBlock.mutate({
+                    id:      contentBlock.id,
+                    payload: { canvas_visible: !contentBlock.canvas_visible },
+                  })}
+                  className={[
+                    'flex items-center gap-1.5 rounded-lg px-2 py-1.5',
+                    'text-xs transition-colors',
+                    contentBlock.canvas_visible
+                      ? 'bg-violet-900/30 text-violet-400 hover:bg-violet-900/50'
+                      : 'bg-neutral-800 text-neutral-500 hover:bg-neutral-700 hover:text-neutral-300',
+                  ].join(' ')}
+                  title={contentBlock.canvas_visible
+                    ? 'Document synced to canvas — click to unsync'
+                    : 'Sync document preview to canvas card'}
+                >
+                  <LayoutDashboard size={12} />
+                  <span>
+                    {contentBlock.canvas_visible ? 'Synced' : 'Sync to canvas'}
+                  </span>
+                </button>
+              )}
 
               {/* View mode toggle — Canvas ↔ Document */}
               {!page.is_locked && (
@@ -369,7 +597,33 @@ export default function PageEditorRoute() {
 
           {/* Icon + title */}
           <div className="mb-6">
-            <div className="mb-3 text-4xl leading-none select-none">{page.icon || '📄'}</div>
+            <div className="mb-3 flex items-center gap-2">
+              {/* Icon — clickable to open emoji picker */}
+              <button
+                ref={iconBtnRef}
+                onClick={openIconPicker}
+                disabled={page.is_locked}
+                className="text-4xl leading-none select-none rounded-lg p-0.5 hover:bg-neutral-800 transition-colors disabled:cursor-not-allowed disabled:opacity-50"
+                title="Change icon"
+              >
+                {page.icon || '📄'}
+              </button>
+              {/* Color pill — clickable to open color picker */}
+              <button
+                ref={colorBtnRef}
+                onClick={openColorPicker}
+                disabled={page.is_locked}
+                className="inline-flex items-center gap-1.5 rounded px-2 py-0.5 bg-neutral-800 hover:bg-neutral-700 transition-colors disabled:cursor-not-allowed disabled:opacity-50 shrink-0"
+                title="Change page color"
+              >
+                <span
+                  className="h-3.5 w-5 rounded-sm shrink-0"
+                  style={{ backgroundColor: effectiveColor }}
+                />
+                <span className="text-xs text-neutral-400">Color</span>
+              </button>
+
+            </div>
 
             {/* Title row — input + optional type badge */}
             <div className="flex items-center gap-2 flex-wrap">
@@ -387,46 +641,26 @@ export default function PageEditorRoute() {
                 aria-label="Page title"
               />
               {currentType && (
-                <span className="inline-flex items-center gap-1 rounded-full bg-neutral-800 px-2 py-0.5 text-xs text-neutral-400 shrink-0">
+                <button
+                  ref={typeBadgeRef}
+                  onClick={openTypePicker}
+                  className="inline-flex items-center gap-1 rounded-full bg-neutral-800 px-2 py-0.5 text-xs text-neutral-400 hover:bg-neutral-700 hover:text-neutral-300 transition-colors shrink-0"
+                  title="Change page type"
+                >
                   {currentType.icon || '📄'} {currentType.name}
-                </span>
+                </button>
               )}
             </div>
 
-            {/* Type picker — shown when "Change type" is toggled */}
-            {changingType && (
-              <div className="mt-2 mb-3 flex flex-wrap gap-1.5 rounded-lg border border-neutral-800 bg-neutral-900 p-2 animate-fade-in">
-                <button
-                  onClick={() => {
-                    updatePage.mutate({ id: pageId, payload: { custom_page_type: null } });
-                    setChangingType(false);
-                  }}
-                  className="flex items-center gap-1 rounded-full bg-neutral-800 px-2 py-1 text-xs text-neutral-300 hover:bg-neutral-700 transition-colors"
-                >
-                  📄 Note
-                </button>
-                {customTypes.map((t) => (
-                  <button
-                    key={t.id}
-                    onClick={() => {
-                      updatePage.mutate({ id: pageId, payload: { custom_page_type: t.id } });
-                      setChangingType(false);
-                    }}
-                    className="flex items-center gap-1 rounded-full bg-neutral-800 px-2 py-1 text-xs text-neutral-300 hover:bg-neutral-700 transition-colors"
-                  >
-                    {t.icon || '📄'} {t.name}
-                  </button>
-                ))}
-              </div>
-            )}
-
             {/* Properties row — typed metadata fields below the title */}
-            <PropertyBar
-              workspaceId={workspaceId}
-              pageId={pageId}
-              readOnly={page.is_locked}
-              customPageTypeId={page.custom_page_type ?? null}
-            />
+            <div className="mt-2">
+              <PropertyBar
+                workspaceId={workspaceId}
+                pageId={pageId}
+                readOnly={page.is_locked}
+                customPageTypeId={page.custom_page_type ?? null}
+              />
+            </div>
           </div>
 
         </div>{/* end header section */}
@@ -444,6 +678,11 @@ export default function PageEditorRoute() {
               onSwitchToDoc={() =>
                 updatePage.mutate({ id: pageId, payload: { view_mode: 'document' } })
               }
+              title={page.title}
+              contentBlock={contentBlock}
+              hasCover={!!coverUrl}
+              coverExpanded={coverExpanded}
+              onToggleCover={() => setCoverExpanded((v) => !v)}
             />
           </div>
 
@@ -451,6 +690,13 @@ export default function PageEditorRoute() {
 
           // ── Document mode: constrained, scrollable editor ───────────────
           <div className="mx-auto w-full max-w-3xl px-6 pb-10">
+            {/* Accent line — rendered when color_style is 'accent' or 'both' */}
+            {showAccent && (
+              <div
+                style={{ backgroundColor: effectiveColor }}
+                className="h-0.5 w-full rounded-full mb-3 opacity-60"
+              />
+            )}
             {/* TipTap editor — wrapped in error boundary to prevent blank screen on crash */}
             <EditorErrorBoundary>
               <Editor
@@ -463,32 +709,13 @@ export default function PageEditorRoute() {
               />
             </EditorErrorBoundary>
 
-            {/* Backlinks panel — shows pages that [[link]] to this page.
-                Renders nothing when there are no backlinks. */}
-            <BacklinksPanel pageId={pageId} workspaceId={workspaceId} />
-
-            {/* Shared canvas blocks — canvas blocks also marked doc_visible */}
-            {blocks.filter((b) => b.canvas_visible && b.doc_visible).length > 0 && (
-              <div className="mt-8 border-t border-neutral-800 pt-6">
-                <p className="text-xs font-semibold uppercase tracking-widest text-neutral-600 mb-3">
-                  Canvas blocks
-                </p>
-                {blocks
-                  .filter((b) => b.canvas_visible && b.doc_visible)
-                  .map((b) => (
-                    <div
-                      key={b.id}
-                      className="mb-3 rounded-lg border border-neutral-800 bg-neutral-900/50 p-3 text-sm text-neutral-400"
-                    >
-                      {b.block_type === 'sticky' || b.block_type === 'text'
-                        ? <p>{JSON.stringify(b.content).slice(0, 100)}…</p>
-                        : <p className="italic">[{b.block_type} canvas block]</p>
-                      }
-                    </div>
-                  ))
-                }
-              </div>
-            )}
+            {/* Bottom tab bar — Linked Pages + Canvas Blocks tabs */}
+            <BottomTabBar
+              pageId={pageId}
+              workspaceId={workspaceId}
+              backlinkPages={backlinks}
+              canvasBlocks={blocks.filter(b => b.canvas_visible && b.canvas_x !== null)}
+            />
           </div>
 
         )}
@@ -504,72 +731,178 @@ export default function PageEditorRoute() {
         />
       )}
     </div>
-  );
-}
 
-// ─────────────────────────────────────────────────────────────────────────────
-// BacklinksPanel
-//
-// What:    Shows a "Linked from" section at the bottom of the page listing
-//          all other pages that contain a [[link]] pointing to this page.
-//
-// Props:
-//   pageId      — UUID of the current page (the link target)
-//   workspaceId — UUID of the current workspace; used to build nav URLs
-//
-// Behaviour:
-//   - Returns null when there are no backlinks (renders nothing, no empty state)
-//   - Refreshes when the user navigates to a new page (pageId changes)
-//   - staleTime: 60s — backlinks change only when another page is saved
-//
-// Files that import this:
-//   This file only — defined here because it is tightly coupled to this route.
-// ─────────────────────────────────────────────────────────────────────────────
+    {/* ── Icon picker portal ───────────────────────────────────────────── */}
+    {iconPickerOpen && mounted && createPortal(
+      <div
+        ref={iconPortalRef}
+        style={{
+          position: 'fixed',
+          top:      iconPickerPos.top,
+          left:     iconPickerPos.left,
+          zIndex:   'var(--z-popup)' as unknown as number,
+        }}
+        className="rounded-xl border border-neutral-700 bg-neutral-900 shadow-xl p-3 w-72 animate-fade-in"
+        onMouseDown={(e) => e.stopPropagation()}
+      >
+        {/* Search */}
+        <input
+          autoFocus
+          type="text"
+          placeholder="Search emoji…"
+          value={iconSearch}
+          onChange={(e) => setIconSearch(e.target.value)}
+          className="mb-2 w-full rounded-md border border-neutral-700 bg-neutral-800 px-2 py-1.5 text-xs text-neutral-200 outline-none focus:border-violet-500 transition-colors"
+        />
+        {/* Emoji grid */}
+        <div className="grid grid-cols-9 gap-0.5 max-h-48 overflow-y-auto">
+          {EMOJI_LIST
+            .filter((e) => !iconSearch.trim() || e.includes(iconSearch.trim()))
+            .map((emoji) => (
+              <button
+                key={emoji}
+                onClick={() => {
+                  updatePage.mutate({ id: pageId, payload: { icon: emoji } });
+                  setIconPickerOpen(false);
+                }}
+                className="flex items-center justify-center rounded p-1 text-lg hover:bg-neutral-700 transition-colors"
+                title={emoji}
+              >
+                {emoji}
+              </button>
+            ))}
+        </div>
+        {/* Remove icon */}
+        <button
+          onClick={() => {
+            updatePage.mutate({ id: pageId, payload: { icon: '' } });
+            setIconPickerOpen(false);
+          }}
+          className="mt-2 w-full rounded-md border border-neutral-800 py-1 text-xs text-neutral-500 hover:bg-neutral-800 hover:text-neutral-300 transition-colors"
+        >
+          Remove icon
+        </button>
+      </div>,
+      document.body,
+    )}
 
-interface BacklinksPanelProps {
-  pageId:      string;
-  workspaceId: string;
-}
+    {/* ── Color picker portal ──────────────────────────────────────────── */}
+    {colorPickerOpen && mounted && createPortal(
+      <div
+        ref={colorPortalRef}
+        style={{
+          position: 'fixed',
+          top:      colorPickerPos.top,
+          left:     colorPickerPos.left,
+          zIndex:   'var(--z-popup)' as unknown as number,
+        }}
+        className="rounded-xl border border-neutral-700 bg-neutral-900 shadow-xl p-3 w-52 animate-fade-in"
+        onMouseDown={(e) => e.stopPropagation()}
+      >
+        <p className="mb-2 text-[10px] font-medium uppercase tracking-wider text-neutral-500">Page color</p>
+        {/* Swatch grid */}
+        <div className="grid grid-cols-6 gap-1.5">
+          {COLOR_SWATCHES.map((hex) => (
+            <button
+              key={hex}
+              onClick={() => {
+                updatePage.mutate({ id: pageId, payload: { color: hex } });
+                setColorPickerOpen(false);
+              }}
+              className="h-6 w-6 rounded-full border-2 transition-all hover:scale-110"
+              style={{
+                backgroundColor: hex,
+                borderColor: hex === effectiveColor && page.color === hex
+                  ? '#ffffff'
+                  : 'transparent',
+                boxShadow: hex === effectiveColor && page.color === hex
+                  ? `0 0 0 1px ${hex}`
+                  : 'none',
+              }}
+              title={hex}
+            />
+          ))}
+        </div>
+        {/* Reset to type default */}
+        <button
+          onClick={() => {
+            updatePage.mutate({ id: pageId, payload: { color: '' } });
+            setColorPickerOpen(false);
+          }}
+          className="mt-2.5 w-full rounded-md border border-neutral-800 py-1 text-xs text-neutral-500 hover:bg-neutral-800 hover:text-neutral-300 transition-colors"
+        >
+          Reset to type default
+        </button>
+        {/* Style section */}
+        <div className="mt-3 border-t border-neutral-800 pt-2">
+          <p className="text-[10px] text-neutral-500 mb-1.5">Show color as</p>
+          <div className="flex gap-1">
+            {(['none', 'accent', 'tint', 'both'] as const).map((opt) => (
+              <button
+                key={opt}
+                onClick={() => updatePage.mutate({ id: pageId, payload: { color_style: opt } })}
+                className={[
+                  'px-2 py-1 rounded text-[10px] capitalize transition-colors',
+                  colorStyle === opt
+                    ? 'bg-violet-900/50 text-violet-300'
+                    : 'bg-neutral-800 text-neutral-400 hover:bg-neutral-700',
+                ].join(' ')}
+              >
+                {opt}
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>,
+      document.body,
+    )}
 
-function BacklinksPanel({ pageId, workspaceId }: BacklinksPanelProps) {
-  const { data: backlinks = [] } = useQuery<BacklinkPage[]>({
-    queryKey: ['backlinks', pageId],
-    queryFn:  () => pageApi.backlinks(pageId),
-    enabled:  !!pageId,
-    staleTime: 1000 * 60, // backlinks change only when another page inserts a link
-  });
-
-  // Render nothing when no pages link here — avoids an empty section
-  if (backlinks.length === 0) return null;
-
-  return (
-    <div className="mt-16 border-t border-neutral-800 pt-6 animate-fade-in">
-
-      {/* Section header */}
-      <div className="mb-3 flex items-center gap-2">
-        <Link2 size={13} className="text-neutral-600" />
-        <p className="text-xs font-semibold uppercase tracking-widest text-neutral-600">
-          Linked from
-        </p>
-        {/* Count badge */}
-        <span className="rounded-full bg-neutral-800 px-1.5 py-0.5 text-xs text-neutral-500">
-          {backlinks.length}
-        </span>
-      </div>
-
-      {/* One row per backlink */}
-      <div className="space-y-1">
-        {backlinks.map((b) => (
-          <Link
-            key={b.id}
-            href={`/${workspaceId}/${b.source_page_id}`}
-            className="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm text-violet-400 transition-colors hover:bg-neutral-800 hover:text-violet-300"
+    {/* ── Type picker portal ───────────────────────────────────────────── */}
+    {typePickerOpen && mounted && createPortal(
+      <div
+        ref={typePortalRef}
+        style={{
+          position: 'fixed',
+          top:      typePickerPos.top,
+          left:     typePickerPos.left,
+          zIndex:   'var(--z-popup)' as unknown as number,
+        }}
+        className="flex flex-col gap-0.5 rounded-lg border border-neutral-700 bg-neutral-900 py-1 shadow-xl min-w-40 animate-fade-in"
+        onMouseDown={(e) => e.stopPropagation()}
+      >
+        {/* No type option */}
+        <button
+          onClick={() => {
+            updatePage.mutate({ id: pageId, payload: { custom_page_type: null } });
+            setTypePickerOpen(false);
+          }}
+          className="flex items-center gap-2 px-3 py-1.5 text-xs text-neutral-400 hover:bg-neutral-800 transition-colors text-left"
+        >
+          📄 Note (no type)
+        </button>
+        <div className="my-0.5 border-t border-neutral-800" />
+        {/* Custom types */}
+        {customTypes.map((t) => (
+          <button
+            key={t.id}
+            onClick={() => {
+              updatePage.mutate({ id: pageId, payload: { custom_page_type: t.id } });
+              setTypePickerOpen(false);
+            }}
+            className={[
+              'flex items-center gap-2 px-3 py-1.5 text-xs text-left transition-colors',
+              t.id === page.custom_page_type
+                ? 'bg-violet-900/30 text-violet-300'
+                : 'text-neutral-300 hover:bg-neutral-800',
+            ].join(' ')}
           >
-            {/* Chip-style label mirrors how page links look in the editor */}
-            <span className="font-medium">[[{b.source_page_title || 'Untitled'}]]</span>
-          </Link>
+            {t.icon || '📄'} {t.name}
+          </button>
         ))}
-      </div>
-    </div>
+      </div>,
+      document.body
+    )}
+    </>
   );
 }
+

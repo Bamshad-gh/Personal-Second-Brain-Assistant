@@ -24,6 +24,16 @@ export const blockKeys = {
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
+const POSITION_KEYS = new Set(['canvas_x', 'canvas_y', 'canvas_z']);
+
+function isPositionOnlyPayload(payload: UpdateBlockPayload): boolean {
+  return Object.keys(payload).every((k) => POSITION_KEYS.has(k));
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Read
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -59,7 +69,19 @@ export function useCreateBlock(pageId: string) {
  *
  * Why optimistic: the editor feels laggy if it waits for the network.
  * We immediately update the cache, send the PATCH, and rollback on failure.
- * This is the same pattern as useUpdatePage.
+ *
+ * Cache strategy:
+ *   onMutate  — optimistically write new values into cache.
+ *               cancelQueries is SKIPPED for canvas position-only updates
+ *               (canvas_x/y/z) because calling it on rapid drag mutations
+ *               causes React Query's mutation queue to break after ~3 drags.
+ *               cancelQueries is only appropriate for cancelling background
+ *               refetches before an optimistic write — not for cancelling
+ *               other mutations.
+ *   onSuccess — write server-confirmed block directly into cache (no refetch)
+ *   onError   — rollback to pre-mutation snapshot
+ *   onSettled — invalidate for non-position updates only; position updates
+ *               rely on onSuccess setQueryData to avoid racing refetches
  */
 export function useUpdateBlock(pageId: string) {
   const queryClient = useQueryClient();
@@ -69,7 +91,14 @@ export function useUpdateBlock(pageId: string) {
       blockApi.update(id, payload),
 
     onMutate: async ({ id, payload }) => {
-      await queryClient.cancelQueries({ queryKey: blockKeys.all(pageId) });
+      // For canvas position-only updates (drag), skip cancelQueries entirely.
+      // cancelQueries on rapid successive mutations causes the mutation queue
+      // to break after ~3 drags — each mutation's response gets cancelled by
+      // the next onMutate before it can resolve.
+      if (!isPositionOnlyPayload(payload)) {
+        await queryClient.cancelQueries({ queryKey: blockKeys.all(pageId) });
+      }
+
       const previousBlocks = queryClient.getQueryData<Block[]>(blockKeys.all(pageId));
 
       queryClient.setQueryData<Block[]>(blockKeys.all(pageId), (old) =>
@@ -79,14 +108,30 @@ export function useUpdateBlock(pageId: string) {
       return { previousBlocks };
     },
 
+    onSuccess: (serverBlock, { id }) => {
+      // Write server-confirmed block data directly into cache.
+      // This keeps canvas_x/y accurate without triggering a full refetch
+      // that could race with a subsequent drag's optimistic update.
+      queryClient.setQueryData<Block[]>(blockKeys.all(pageId), (old) =>
+        old?.map((b) => (b.id === id ? { ...b, ...serverBlock } : b)) ?? [],
+      );
+    },
+
     onError: (_err, _vars, context) => {
       if (context?.previousBlocks) {
         queryClient.setQueryData(blockKeys.all(pageId), context.previousBlocks);
       }
     },
 
-    onSettled: () => {
-      queryClient.invalidateQueries({ queryKey: blockKeys.all(pageId) });
+    onSettled: (_data, _error, variables) => {
+      // Canvas position-only updates (canvas_x/y/z) skip invalidation entirely.
+      // The onSuccess setQueryData already wrote the server-confirmed values,
+      // so a refetch here would only race with the next drag's optimistic update.
+      // All other updates (content, doc_visible, canvas_visible, order, etc.)
+      // still invalidate to pull in any server-side changes.
+      if (!isPositionOnlyPayload(variables.payload)) {
+        queryClient.invalidateQueries({ queryKey: blockKeys.all(pageId) });
+      }
     },
   });
 }

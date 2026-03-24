@@ -15,6 +15,8 @@ class Connection(BaseModel):
     class ConnectionType(models.TextChoices):
         # Phase 1
         PAGE_LINK      = 'page_link',   'Page Link'
+        # Canvas
+        BLOCK_LINK     = 'block_link',  'Block Link'
         # Phase 2
         FORM_TO_SHEET  = 'form_sheet',  'Form → Spreadsheet'
         CHART_TO_SHEET = 'chart_sheet', 'Chart ← Spreadsheet'
@@ -59,6 +61,19 @@ class Connection(BaseModel):
     # PAGE_LINK:        {"anchor_text": "Project Alpha"}
     # DATE_TO_CALENDAR: {"calendar_event_id": "google-id"}
     # TIMER_TO_PROJECT: {"total_seconds": 3600}
+
+    # ── Canvas arrow fields (BLOCK_LINK only) ─────────────────
+    arrow_type = models.CharField(
+        max_length=20,
+        choices=[('link', 'Visual Link'), ('flow', 'Data Flow')],
+        default='link',
+    )
+    direction = models.CharField(
+        max_length=20,
+        choices=[('directed', 'Directed'), ('undirected', 'Undirected')],
+        default='directed',
+    )
+    label = models.CharField(max_length=200, blank=True, default='')
 
     class Meta:
         indexes = [

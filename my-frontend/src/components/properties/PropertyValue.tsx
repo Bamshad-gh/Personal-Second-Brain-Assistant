@@ -5,11 +5,19 @@
  *          Switches on definition.prop_type to show the right display + editor.
  *
  * Props:
- *   definition   — the PropertyDefinition (type, name, options)
- *   value        — the current PropertyValue (may be undefined if not set yet)
- *   pageId       — page UUID (needed to build the upsert payload)
+ *   definition     — the PropertyDefinition (type, name, options)
+ *   value          — the current PropertyValue (may be undefined if not set yet)
+ *   pageId         — page UUID (needed to build the upsert payload)
  *   existingValues — full list of values for this page (needed by useUpsertValue)
- *   readOnly     — when true (locked page), disable all editing
+ *   readOnly       — when true (locked page), disable all editing
+ *
+ * Portal strategy:
+ *   Select and multi-select types open a dropdown list of options. These are
+ *   rendered via createPortal to document.body so they escape overflow:hidden
+ *   ancestors (canvas-mode container) and sit above TipTap stacking contexts.
+ *   Other types (text, number, date, etc.) render inline inputs that don't
+ *   create overflow issues and are left unchanged.
+ *   Mount guard: useState+useEffect only — never typeof document !== 'undefined'.
  *
  * Select / Multi value_json shape:
  *   Select: value_json = { label: string; color: string } | null
@@ -20,8 +28,9 @@
 'use client';
 
 import { useState, useRef, useEffect } from 'react';
-import { Check } from 'lucide-react';
-import { useUpsertValue } from '@/hooks/useProperties';
+import { createPortal }                from 'react-dom';
+import { Check }                       from 'lucide-react';
+import { useUpsertValue }              from '@/hooks/useProperties';
 import type { PropertyDefinition, PropertyValue as PV, SelectOption } from '@/types';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -167,14 +176,61 @@ export function PropertyValue({
   existingValues,
   readOnly = false,
 }: PropertyValueProps) {
+
   const [editing, setEditing] = useState(false);
-  const inputRef = useRef<HTMLInputElement>(null);
+  const inputRef  = useRef<HTMLInputElement>(null);
 
   const upsert = useUpsertValue(pageId, existingValues);
 
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  // PORTAL STATE — select + multi only
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  // Mount guard: useState+useEffect only — never typeof document !== 'undefined'
+  const [mounted, setMounted] = useState(false);
+  // eslint-disable-next-line react-hooks/set-state-in-effect
+  useEffect(() => { setMounted(true); }, []);
+
+  // triggerRef — the display button that opens the dropdown
+  // portalRef  — the portal div, used for click-outside exclusion
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const portalRef  = useRef<HTMLDivElement>(null);
+  const [dropPos, setDropPos] = useState({ top: 0, left: 0 });
+
+  // Click-outside — only active for select / multi dropdowns
+  useEffect(() => {
+    if (!editing) return;
+    if (definition.prop_type !== 'select' && definition.prop_type !== 'multi') return;
+
+    function onMouseDown(e: MouseEvent) {
+      if (triggerRef.current?.contains(e.target as Node)) return;
+      if (portalRef.current?.contains(e.target as Node)) return;
+      setEditing(false);
+    }
+    document.addEventListener('mousedown', onMouseDown);
+    return () => document.removeEventListener('mousedown', onMouseDown);
+  }, [editing, definition.prop_type]);
+
+  // Escape key — closes any open select / multi dropdown
+  useEffect(() => {
+    if (!editing) return;
+    if (definition.prop_type !== 'select' && definition.prop_type !== 'multi') return;
+
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key === 'Escape') setEditing(false);
+    }
+    document.addEventListener('keydown', onKeyDown);
+    return () => document.removeEventListener('keydown', onKeyDown);
+  }, [editing, definition.prop_type]);
+
+  // Focus inline inputs when they appear
   useEffect(() => {
     if (editing) inputRef.current?.focus();
   }, [editing]);
+
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  // HELPERS
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
   function buildPayload(partial: Partial<PV>): Partial<PV> {
     return { page: pageId, definition: definition.id, ...partial };
@@ -184,6 +240,19 @@ export function PropertyValue({
     upsert.mutate(buildPayload(partial));
     setEditing(false);
   }
+
+  // Compute portal position from the trigger button's bounding rect
+  function openDropdown() {
+    if (triggerRef.current) {
+      const r = triggerRef.current.getBoundingClientRect();
+      setDropPos({ top: r.bottom + 4, left: r.left });
+    }
+    setEditing(true);
+  }
+
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  // RENDER — switch on prop_type
+  // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
   // ── Checkbox ──────────────────────────────────────────────────────────────
   if (definition.prop_type === 'checkbox') {
@@ -226,84 +295,122 @@ export function PropertyValue({
     );
   }
 
-  // ── Select ────────────────────────────────────────────────────────────────
+  // ── Select — portal dropdown ───────────────────────────────────────────────
   if (definition.prop_type === 'select') {
-    if (editing && !readOnly) {
-      return (
-        <div className="flex flex-col gap-0.5 rounded-lg border border-neutral-700 bg-neutral-900 py-1 shadow-lg min-w-35">
-          {definition.options.map((opt: SelectOption) => {
-            const c = opt.color ?? '#a855f7';
-            return (
-              <button
-                key={opt.label}
-                onClick={() => save({ value_json: { label: opt.label, color: c } })}
-                className="flex items-center gap-2 px-3 py-1.5 text-left text-xs hover:bg-neutral-800 transition-colors"
-              >
-                <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: c }} />
-                <span style={{ color: c }}>{opt.label}</span>
-              </button>
-            );
-          })}
-          <button
-            onClick={() => save({ value_json: null })}
-            className="px-3 py-1.5 text-left text-xs text-neutral-600 hover:bg-neutral-800 transition-colors"
-          >
-            Clear
-          </button>
-        </div>
-      );
-    }
     return (
-      <button disabled={readOnly} onClick={() => setEditing(true)} className="text-left disabled:cursor-not-allowed">
-        <PropertyValueDisplay definition={definition} value={value} />
-      </button>
+      <>
+        {/* Display button — triggers portal dropdown */}
+        <button
+          ref={triggerRef}
+          disabled={readOnly}
+          onClick={() => { if (!readOnly) openDropdown(); }}
+          className="text-left disabled:cursor-not-allowed"
+        >
+          <PropertyValueDisplay definition={definition} value={value} />
+        </button>
+
+        {/* Portal dropdown — rendered at document.body to escape overflow:hidden */}
+        {editing && !readOnly && mounted && createPortal(
+          <div
+            ref={portalRef}
+            style={{
+              position: 'fixed',
+              top:      dropPos.top,
+              left:     dropPos.left,
+              zIndex:   'var(--z-popup)' as unknown as number,
+            }}
+            className="flex flex-col gap-0.5 rounded-lg border border-neutral-700 bg-neutral-900 py-1 shadow-lg min-w-35 animate-fade-in"
+            onMouseDown={(e) => e.stopPropagation()}
+          >
+            {definition.options.map((opt: SelectOption) => {
+              const c = opt.color ?? '#a855f7';
+              return (
+                <button
+                  key={opt.label}
+                  onClick={() => save({ value_json: { label: opt.label, color: c } })}
+                  className="flex items-center gap-2 px-3 py-1.5 text-left text-xs hover:bg-neutral-800 transition-colors"
+                >
+                  <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: c }} />
+                  <span style={{ color: c }}>{opt.label}</span>
+                </button>
+              );
+            })}
+            <button
+              onClick={() => save({ value_json: null })}
+              className="px-3 py-1.5 text-left text-xs text-neutral-600 hover:bg-neutral-800 transition-colors"
+            >
+              Clear
+            </button>
+          </div>,
+          document.body,
+        )}
+      </>
     );
   }
 
-  // ── Multi-select ──────────────────────────────────────────────────────────
+  // ── Multi-select — portal dropdown ────────────────────────────────────────
   if (definition.prop_type === 'multi') {
     const selected: OptionValue[] = isOptionValueArray(value?.value_json) ? value!.value_json : [];
 
-    if (editing && !readOnly) {
-      return (
-        <div className="flex flex-col gap-0.5 rounded-lg border border-neutral-700 bg-neutral-900 py-1 shadow-lg min-w-40">
-          {definition.options.map((opt: SelectOption) => {
-            const isSelected = selected.some((s) => s.label === opt.label);
-            const c = opt.color ?? '#a855f7';
-            return (
-              <button
-                key={opt.label}
-                onClick={() => {
-                  const next = isSelected
-                    ? selected.filter((s) => s.label !== opt.label)
-                    : [...selected, { label: opt.label, color: c }];
-                  upsert.mutate(buildPayload({ value_json: next }));
-                }}
-                className="flex items-center gap-2 px-3 py-1.5 text-left text-xs hover:bg-neutral-800 transition-colors"
-              >
-                <span
-                  className="flex h-3 w-3 shrink-0 items-center justify-center rounded border border-neutral-600"
-                  style={isSelected ? { backgroundColor: c, borderColor: c } : {}}
-                >
-                  {isSelected && <Check size={8} strokeWidth={3} className="text-white" />}
-                </span>
-                <span style={{ color: c }}>{opt.label}</span>
-              </button>
-            );
-          })}
-          <button
-            onClick={() => setEditing(false)}
-            className="px-3 py-1.5 text-left text-xs text-neutral-600 hover:bg-neutral-800 transition-colors"
-          >
-            Done
-          </button>
-        </div>
-      );
-    }
     return (
-      <button disabled={readOnly} onClick={() => setEditing(true)} className="text-left disabled:cursor-not-allowed">
-        <PropertyValueDisplay definition={definition} value={value} />
-      </button>
+      <>
+        {/* Display button — triggers portal dropdown */}
+        <button
+          ref={triggerRef}
+          disabled={readOnly}
+          onClick={() => { if (!readOnly) openDropdown(); }}
+          className="text-left disabled:cursor-not-allowed"
+        >
+          <PropertyValueDisplay definition={definition} value={value} />
+        </button>
+
+        {/* Portal dropdown — rendered at document.body to escape overflow:hidden */}
+        {editing && !readOnly && mounted && createPortal(
+          <div
+            ref={portalRef}
+            style={{
+              position: 'fixed',
+              top:      dropPos.top,
+              left:     dropPos.left,
+              zIndex:   'var(--z-popup)' as unknown as number,
+            }}
+            className="flex flex-col gap-0.5 rounded-lg border border-neutral-700 bg-neutral-900 py-1 shadow-lg min-w-40 animate-fade-in"
+            onMouseDown={(e) => e.stopPropagation()}
+          >
+            {definition.options.map((opt: SelectOption) => {
+              const isSelected = selected.some((s) => s.label === opt.label);
+              const c = opt.color ?? '#a855f7';
+              return (
+                <button
+                  key={opt.label}
+                  onClick={() => {
+                    const next = isSelected
+                      ? selected.filter((s) => s.label !== opt.label)
+                      : [...selected, { label: opt.label, color: c }];
+                    upsert.mutate(buildPayload({ value_json: next }));
+                  }}
+                  className="flex items-center gap-2 px-3 py-1.5 text-left text-xs hover:bg-neutral-800 transition-colors"
+                >
+                  <span
+                    className="flex h-3 w-3 shrink-0 items-center justify-center rounded border border-neutral-600"
+                    style={isSelected ? { backgroundColor: c, borderColor: c } : {}}
+                  >
+                    {isSelected && <Check size={8} strokeWidth={3} className="text-white" />}
+                  </span>
+                  <span style={{ color: c }}>{opt.label}</span>
+                </button>
+              );
+            })}
+            <button
+              onClick={() => setEditing(false)}
+              className="px-3 py-1.5 text-left text-xs text-neutral-600 hover:bg-neutral-800 transition-colors"
+            >
+              Done
+            </button>
+          </div>,
+          document.body,
+        )}
+      </>
     );
   }
 

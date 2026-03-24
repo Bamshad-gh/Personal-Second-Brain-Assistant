@@ -8,27 +8,35 @@ from .views import (
     PageMoveView,
     PageDuplicateView,
     PagePreviewView,
+    PageCoverView,
+    PageGalleryView,
 )
 
 urlpatterns = [
-    # List & Create
+    # ── Gallery (no auth, must come before <uuid:pk> patterns) ───────────────
+    path('gallery/', PageGalleryView.as_view(), name='page-gallery'),
+
+    # ── List & Create ─────────────────────────────────────────────────────────
     path('', PageListCreateView.as_view(), name='page-list-create'),
 
-    # Retrieve, Update, Delete
+    # ── Retrieve, Update, Delete ──────────────────────────────────────────────
     path('<uuid:pk>/', PageDetailView.as_view(), name='page-detail'),
 
-    # Editor view (page with blocks)
+    # ── Editor view (page with blocks) ────────────────────────────────────────
     path('<uuid:pk>/editor/', PageEditorView.as_view(), name='page-editor'),
 
-    # Page children
+    # ── Page children ─────────────────────────────────────────────────────────
     path('<uuid:pk>/children/', PageChildrenView.as_view(), name='page-children'),
 
-    # Move page
+    # ── Move page ─────────────────────────────────────────────────────────────
     path('<uuid:pk>/move/', PageMoveView.as_view(), name='page-move'),
 
-    # Duplicate page
+    # ── Duplicate page ────────────────────────────────────────────────────────
     path('<uuid:pk>/duplicate/', PageDuplicateView.as_view(), name='page-duplicate'),
 
-    # Hover-card preview
+    # ── Hover-card preview ────────────────────────────────────────────────────
     path('<uuid:pk>/preview/', PagePreviewView.as_view(), name='page-preview'),
+
+    # ── Cover image upload / remove ───────────────────────────────────────────
+    path('<uuid:pk>/cover/', PageCoverView.as_view(), name='page-cover'),
 ]

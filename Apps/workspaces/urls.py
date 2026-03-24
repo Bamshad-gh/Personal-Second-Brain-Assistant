@@ -5,6 +5,7 @@ from .views import (
     WorkspaceDetailView,
     WorkspacePagesView,
     WorkspaceStatsView,
+    SeedTemplatesView,
 )
 
 urlpatterns = [
@@ -19,4 +20,7 @@ urlpatterns = [
 
     # Workspace statistics
     path('<uuid:pk>/stats/', WorkspaceStatsView.as_view(), name='workspace-stats'),
+
+    # Seed built-in page-type templates (idempotent)
+    path('<uuid:pk>/seed-templates/', SeedTemplatesView.as_view(), name='workspace-seed-templates'),
 ]
