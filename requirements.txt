@@ -1,0 +1,32 @@
+# ── Core Django ───────────────────────────────────────────────────────────────
+Django
+djangorestframework
+asgiref
+sqlparse
+tzdata
+
+# ── Auth & JWT ────────────────────────────────────────────────────────────────
+djangorestframework-simplejwt
+PyJWT
+python-decouple
+django-environ
+social-auth-app-django
+
+# ── API utilities ─────────────────────────────────────────────────────────────
+django-cors-headers
+django-filter
+
+# ── Production server ─────────────────────────────────────────────────────────
+gunicorn
+whitenoise
+
+# ── Database ──────────────────────────────────────────────────────────────────
+psycopg2-binary
+
+# ── AI providers ─────────────────────────────────────────────────────────────
+anthropic
+openai
+groq
+
+# ── Media ─────────────────────────────────────────────────────────────────────
+pillow
