@@ -73,7 +73,7 @@ export function AddBlockHandle({
         alignItems:    'center',
         gap:           2,
         pointerEvents: 'auto', // pass-through so editor clicks are never blocked
-        
+
       }}
       // onMouseMove={(e) => e.stopPropagation()}
       onMouseLeave={onMouseLeave}

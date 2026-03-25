@@ -92,16 +92,16 @@ import {
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 interface EditorProps {
-  initialContent:  Record<string, unknown> | null;
-  onSave:          (json: Record<string, unknown>) => void;
+  initialContent:       Record<string, unknown> | null;
+  onSave:               (json: Record<string, unknown>) => void;
   /** Called on every content change with the editor's plain text.
    *  Used by the AI panel to get the page text as context. */
-  onTextChange?:   (text: string) => void;
-  readOnly?:       boolean;
+  onTextChange?:        (text: string) => void;
+  readOnly?:            boolean;
   /** UUID of the current workspace — used by the [[ page link popup */
-  workspaceId:     string;
+  workspaceId:          string;
   /** UUID of the current page — used to record page link connections */
-  pageId:          string;
+  pageId:               string;
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

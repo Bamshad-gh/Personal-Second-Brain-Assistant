@@ -19,7 +19,7 @@
 
 'use client';
 
-import { Type, StickyNote, Minus, Plus, FileText, Image as ImageIcon } from 'lucide-react';
+import { Type, StickyNote, Minus, Plus, FileText, Image as ImageIcon, LayoutPanelLeft } from 'lucide-react';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -31,6 +31,7 @@ interface CanvasToolbarProps {
   onZoomOut:      () => void;
   onAddText:      () => void;
   onAddSticky:    () => void;
+  onAddRich:      () => void;
   onSwitchToDoc:  () => void;
   hasCover?:      boolean;
   coverExpanded?: boolean;
@@ -47,6 +48,7 @@ export function CanvasToolbar({
   onZoomOut,
   onAddText,
   onAddSticky,
+  onAddRich,
   onSwitchToDoc,
   hasCover,
   coverExpanded,
@@ -74,6 +76,12 @@ export function CanvasToolbar({
       <ToolbarButton onClick={onAddSticky} title="Add sticky note">
         <StickyNote size={13} />
         <span>Sticky</span>
+      </ToolbarButton>
+
+      {/* ── Add rich block ─────────────────────────────────────────────── */}
+      <ToolbarButton onClick={onAddRich} title="Add rich block">
+        <LayoutPanelLeft size={13} />
+        <span>Rich</span>
       </ToolbarButton>
 
       {/* ── Divider ────────────────────────────────────────────────────── */}

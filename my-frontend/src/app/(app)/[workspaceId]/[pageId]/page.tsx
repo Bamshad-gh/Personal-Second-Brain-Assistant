@@ -31,6 +31,11 @@
  * and "Canvas Blocks" tabs. Rendered by BottomTabBar component.
  *   → Backlinks backend: GET /api/relations/pages/{id}/backlinks/
  *   → Component: src/components/editor/BottomTabBar.tsx
+ *
+ * Canvas compact header:
+ *   In canvas mode the full header is replaced by a slim ~36px bar showing
+ *   only the page icon, truncated title, and controls. A fullscreen button
+ *   hides even that bar and gives the canvas 100% of the screen.
  */
 
 'use client';
@@ -40,7 +45,8 @@ import { useState, useEffect, useCallback, useRef }   from 'react';
 import { createPortal }                               from 'react-dom';
 import { ArrowLeft, Lock, Sparkles,
          MoreHorizontal, Pencil, Files, Copy, Trash2,
-         LayoutDashboard, FileText, Layers }           from 'lucide-react';
+         LayoutDashboard, FileText, Layers,
+         Maximize2, Minimize2 }                       from 'lucide-react';
 import toast                                          from 'react-hot-toast';
 import { useQuery, useMutation, useQueryClient }      from '@tanstack/react-query';
 import { pageApi }                                    from '@/lib/api';
@@ -295,11 +301,32 @@ export default function PageEditorRoute() {
   const [localCoverUrl, setLocalCoverUrl] = useState<string | null>(null);
   const [coverExpanded, setCoverExpanded] = useState(false);
 
+  // ── Canvas fullscreen state ───────────────────────────────────────────────
+  const [canvasFullscreen, setCanvasFullscreen] = useState(false);
+
+  // ── Block template panel (canvas mode) ───────────────────────────────────
+  const [showBlockPanel, setShowBlockPanel] = useState(false);
+
   // Reset local cover override when navigating to a different page
   useEffect(() => { setLocalCoverUrl(null); }, [pageId]);
 
-  // Collapse cover whenever we leave canvas mode
-  useEffect(() => { if (page?.view_mode !== 'canvas') setCoverExpanded(false); }, [page?.view_mode]);
+  // Collapse cover + exit fullscreen whenever we leave canvas mode
+  useEffect(() => {
+    if (page?.view_mode !== 'canvas') {
+      setCoverExpanded(false);
+      setCanvasFullscreen(false);
+    }
+  }, [page?.view_mode]);
+
+  // Escape key exits fullscreen (fires before CanvasView's own Escape handler)
+  useEffect(() => {
+    if (!canvasFullscreen) return;
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key === 'Escape') setCanvasFullscreen(false);
+    }
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [canvasFullscreen]);
 
   // ── Find the main content block (document mode autosave) ────────────────
   // canvas_x === null guards against canvas text blocks contaminating the document editor
@@ -308,7 +335,13 @@ export default function PageEditorRoute() {
   // ── Canvas blocks — only blocks explicitly pinned to the canvas ───────────
   const canvasBlocks = blocks.filter((b) => b.canvas_visible);
 
-  // ── Autosave callback (document mode) ───────────────────────────────────
+  // ── Shared blocks — visible in both document and canvas ──────────────────
+  // Used to populate the "Shared" tab in CanvasView's left panel.
+  const sharedBlocks = blocks.filter(
+    (b) => b.canvas_visible && b.doc_visible && b.canvas_x !== null,
+  );
+
+  //── Autosave callback (document mode) ───────────────────────────────────
   const handleSave = useCallback(
     async (json: Record<string, unknown>) => {
       try {
@@ -487,189 +520,325 @@ export default function PageEditorRoute() {
           onExpandRequest={() => setCoverExpanded(true)}
         />
 
-        {/* ── Header section — always constrained to max-w-3xl ─────────── */}
-        <div className={`mx-auto w-full max-w-3xl px-6 ${coverUrl ? 'pt-6' : 'pt-10'} animate-fade-in`}>
+        {/* ── Header section ──────────────────────────────────────────────
+            Canvas mode: compact ~36px bar (icon + title + controls).
+            Document mode: full header with title, icon, property bar.      */}
+        {isCanvas ? (
 
-          {/* Top bar */}
-          <div className="mb-8 flex items-center gap-3">
+          /* ── Compact canvas header (hidden when fullscreen) ─────────── */
+          !canvasFullscreen ? (
+            <div className="flex shrink-0 items-center gap-1 border-b border-neutral-800 px-3 py-2">
 
-            {/* ← Back to workspace */}
-            <button
-              onClick={() => router.push(`/${workspaceId}`)}
-              className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-neutral-600 transition-colors hover:bg-neutral-800 hover:text-neutral-300"
-              title="Back to workspace"
-            >
-              <ArrowLeft size={15} />
-            </button>
-
-            {titleSaved && (
-              <span className="text-xs text-violet-400">Saved ✓</span>
-            )}
-
-            {/* Right-side controls */}
-            <div className="ml-auto flex items-center gap-1">
-
-              {/* AI toggle button */}
+              {/* ← Back to workspace */}
               <button
-                onClick={toggleAiPanel}
-                className={[
-                  'flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold',
-                  'transition-all duration-200',
-                  aiPanelOpen
-                    ? 'text-white'
-                    : 'bg-neutral-800 text-neutral-400 hover:bg-neutral-700 hover:text-neutral-200',
-                ].join(' ')}
-                style={aiPanelOpen ? {
-                  background: 'linear-gradient(135deg, #7c3aed 0%, #a855f7 100%)',
-                  boxShadow: '0 0 12px rgba(139,92,246,0.3)',
-                } : {}}
-                title="Toggle AI assistant"
+                onClick={() => router.push(`/${workspaceId}`)}
+                className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-neutral-600 transition-colors hover:bg-neutral-800 hover:text-neutral-300"
+                title="Back to workspace"
               >
-                <Sparkles size={13} />
-                AI
+                <ArrowLeft size={13} />
               </button>
 
-              {/* Sync to canvas — toggles canvas_visible on the document content block */}
-              {contentBlock && (
+              {/* Page icon + title (read-only compact display) */}
+              <span className="select-none text-base leading-none">{page.icon || '📄'}</span>
+              <span className="max-w-45 truncate text-sm text-neutral-300">
+                {title || 'Untitled'}
+              </span>
+
+              {titleSaved && (
+                <span className="text-xs text-violet-400">Saved ✓</span>
+              )}
+
+              {/* Right-side controls */}
+              <div className="ml-auto flex items-center gap-1">
+
+                {/* AI toggle */}
                 <button
-                  onClick={() => updateBlock.mutate({
-                    id:      contentBlock.id,
-                    payload: { canvas_visible: !contentBlock.canvas_visible },
-                  })}
+                  onClick={toggleAiPanel}
+                  className={[
+                    'flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold',
+                    'transition-all duration-200',
+                    aiPanelOpen
+                      ? 'text-white'
+                      : 'bg-neutral-800 text-neutral-400 hover:bg-neutral-700 hover:text-neutral-200',
+                  ].join(' ')}
+                  style={aiPanelOpen ? {
+                    background: 'linear-gradient(135deg, #7c3aed 0%, #a855f7 100%)',
+                    boxShadow: '0 0 12px rgba(139,92,246,0.3)',
+                  } : {}}
+                  title="Toggle AI assistant"
+                >
+                  <Sparkles size={13} />
+                  AI
+                </button>
+
+                {/* Sync to canvas */}
+                {contentBlock && (
+                  <button
+                    onClick={() => updateBlock.mutate({
+                      id:      contentBlock.id,
+                      payload: { canvas_visible: !contentBlock.canvas_visible },
+                    })}
+                    className={[
+                      'flex items-center gap-1.5 rounded-lg px-2 py-1.5',
+                      'text-xs transition-colors',
+                      contentBlock.canvas_visible
+                        ? 'bg-violet-900/30 text-violet-400 hover:bg-violet-900/50'
+                        : 'bg-neutral-800 text-neutral-500 hover:bg-neutral-700 hover:text-neutral-300',
+                    ].join(' ')}
+                    title={contentBlock.canvas_visible
+                      ? 'Document synced to canvas — click to unsync'
+                      : 'Sync document preview to canvas card'}
+                  >
+                    <LayoutDashboard size={12} />
+                    <span>{contentBlock.canvas_visible ? 'Synced' : 'Sync to canvas'}</span>
+                  </button>
+                )}
+
+                {/* Block template panel toggle */}
+                <button
+                  onClick={() => setShowBlockPanel(v => !v)}
                   className={[
                     'flex items-center gap-1.5 rounded-lg px-2 py-1.5',
                     'text-xs transition-colors',
-                    contentBlock.canvas_visible
-                      ? 'bg-violet-900/30 text-violet-400 hover:bg-violet-900/50'
+                    showBlockPanel
+                      ? 'bg-violet-900/30 text-violet-400'
                       : 'bg-neutral-800 text-neutral-500 hover:bg-neutral-700 hover:text-neutral-300',
                   ].join(' ')}
-                  title={contentBlock.canvas_visible
-                    ? 'Document synced to canvas — click to unsync'
-                    : 'Sync document preview to canvas card'}
+                  title="Show document blocks panel"
                 >
-                  <LayoutDashboard size={12} />
-                  <span>
-                    {contentBlock.canvas_visible ? 'Synced' : 'Sync to canvas'}
-                  </span>
+                  <FileText size={12} />
+                  <span>Blocks</span>
                 </button>
+
+                {/* Switch to document mode */}
+                {!page.is_locked && (
+                  <button
+                    onClick={() =>
+                      updatePage.mutate({ id: pageId, payload: { view_mode: 'document' } })
+                    }
+                    disabled={updatePage.isPending}
+                    className="flex items-center gap-1.5 rounded-lg bg-neutral-800 px-3 py-1.5 text-xs font-semibold text-neutral-400 transition-all duration-200 hover:bg-neutral-700 hover:text-neutral-200 disabled:opacity-50"
+                    title="Switch to document mode"
+                  >
+                    <FileText size={13} /> Document
+                  </button>
+                )}
+
+                {/* Fullscreen toggle */}
+                <button
+                  onClick={() => setCanvasFullscreen(true)}
+                  title="Fullscreen canvas"
+                  className="flex h-7 w-7 items-center justify-center rounded-lg text-neutral-600 transition-colors hover:bg-neutral-800 hover:text-neutral-300"
+                >
+                  <Maximize2 size={13} />
+                </button>
+
+                {/* Page options "..." */}
+                <DropdownMenu items={pageMenuItems}>
+                  <button
+                    className="flex h-7 w-7 items-center justify-center rounded-lg text-neutral-600 transition-colors hover:bg-neutral-800 hover:text-neutral-300"
+                    title="Page options"
+                  >
+                    <MoreHorizontal size={15} />
+                  </button>
+                </DropdownMenu>
+
+              </div>
+
+              {page.is_locked && (
+                <span className="flex items-center gap-1 rounded-full bg-neutral-800 px-2 py-0.5 text-xs text-neutral-500">
+                  <Lock size={10} /> Locked
+                </span>
+              )}
+            </div>
+          ) : null
+
+        ) : (
+
+          /* ── Full document header ────────────────────────────────────── */
+          <div className={`mx-auto w-full max-w-3xl px-6 ${coverUrl ? 'pt-6' : 'pt-10'} animate-fade-in`}>
+
+            {/* Top bar */}
+            <div className="mb-8 flex items-center gap-3">
+
+              {/* ← Back to workspace */}
+              <button
+                onClick={() => router.push(`/${workspaceId}`)}
+                className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-neutral-600 transition-colors hover:bg-neutral-800 hover:text-neutral-300"
+                title="Back to workspace"
+              >
+                <ArrowLeft size={15} />
+              </button>
+
+              {titleSaved && (
+                <span className="text-xs text-violet-400">Saved ✓</span>
               )}
 
-              {/* View mode toggle — Canvas ↔ Document */}
-              {!page.is_locked && (
+              {/* Right-side controls */}
+              <div className="ml-auto flex items-center gap-1">
+
+                {/* AI toggle button */}
                 <button
-                  onClick={() => {
-                    const next = isCanvas ? 'document' : 'canvas';
-                    updatePage.mutate({ id: pageId, payload: { view_mode: next } });
-                  }}
-                  disabled={updatePage.isPending}
+                  onClick={toggleAiPanel}
                   className={[
                     'flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold',
-                    'bg-neutral-800 text-neutral-400 hover:bg-neutral-700 hover:text-neutral-200',
-                    'transition-all duration-200 disabled:opacity-50',
+                    'transition-all duration-200',
+                    aiPanelOpen
+                      ? 'text-white'
+                      : 'bg-neutral-800 text-neutral-400 hover:bg-neutral-700 hover:text-neutral-200',
                   ].join(' ')}
-                  title={isCanvas ? 'Switch to document mode' : 'Switch to canvas mode'}
+                  style={aiPanelOpen ? {
+                    background: 'linear-gradient(135deg, #7c3aed 0%, #a855f7 100%)',
+                    boxShadow: '0 0 12px rgba(139,92,246,0.3)',
+                  } : {}}
+                  title="Toggle AI assistant"
                 >
-                  {isCanvas
-                    ? <><FileText size={13} /> Document</>
-                    : <><LayoutDashboard size={13} /> Canvas</>
-                  }
+                  <Sparkles size={13} />
+                  AI
                 </button>
+
+                {/* Sync to canvas — toggles canvas_visible on the document content block */}
+                {contentBlock && (
+                  <button
+                    onClick={() => updateBlock.mutate({
+                      id:      contentBlock.id,
+                      payload: { canvas_visible: !contentBlock.canvas_visible },
+                    })}
+                    className={[
+                      'flex items-center gap-1.5 rounded-lg px-2 py-1.5',
+                      'text-xs transition-colors',
+                      contentBlock.canvas_visible
+                        ? 'bg-violet-900/30 text-violet-400 hover:bg-violet-900/50'
+                        : 'bg-neutral-800 text-neutral-500 hover:bg-neutral-700 hover:text-neutral-300',
+                    ].join(' ')}
+                    title={contentBlock.canvas_visible
+                      ? 'Document synced to canvas — click to unsync'
+                      : 'Sync document preview to canvas card'}
+                  >
+                    <LayoutDashboard size={12} />
+                    <span>
+                      {contentBlock.canvas_visible ? 'Synced' : 'Sync to canvas'}
+                    </span>
+                  </button>
+                )}
+
+                {/* View mode toggle — Canvas ↔ Document */}
+                {!page.is_locked && (
+                  <button
+                    onClick={() => {
+                      const next = isCanvas ? 'document' : 'canvas';
+                      updatePage.mutate({ id: pageId, payload: { view_mode: next } });
+                    }}
+                    disabled={updatePage.isPending}
+                    className={[
+                      'flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold',
+                      'bg-neutral-800 text-neutral-400 hover:bg-neutral-700 hover:text-neutral-200',
+                      'transition-all duration-200 disabled:opacity-50',
+                    ].join(' ')}
+                    title={isCanvas ? 'Switch to document mode' : 'Switch to canvas mode'}
+                  >
+                    {isCanvas
+                      ? <><FileText size={13} /> Document</>
+                      : <><LayoutDashboard size={13} /> Canvas</>
+                    }
+                  </button>
+                )}
+
+                {/* "..." page options menu */}
+                <DropdownMenu items={pageMenuItems}>
+                  <button
+                    className="flex h-7 w-7 items-center justify-center rounded-lg text-neutral-600 transition-colors hover:bg-neutral-800 hover:text-neutral-300"
+                    title="Page options"
+                  >
+                    <MoreHorizontal size={15} />
+                  </button>
+                </DropdownMenu>
+
+              </div>
+
+              {page.is_locked && (
+                <span className="flex items-center gap-1 rounded-full bg-neutral-800 px-2 py-0.5 text-xs text-neutral-500">
+                  <Lock size={10} /> Locked
+                </span>
               )}
-
-              {/* "..." page options menu */}
-              <DropdownMenu items={pageMenuItems}>
-                <button
-                  className="flex h-7 w-7 items-center justify-center rounded-lg text-neutral-600 transition-colors hover:bg-neutral-800 hover:text-neutral-300"
-                  title="Page options"
-                >
-                  <MoreHorizontal size={15} />
-                </button>
-              </DropdownMenu>
-
             </div>
 
-            {page.is_locked && (
-              <span className="flex items-center gap-1 rounded-full bg-neutral-800 px-2 py-0.5 text-xs text-neutral-500">
-                <Lock size={10} /> Locked
-              </span>
-            )}
-          </div>
+            {/* Icon + title */}
+            <div className="mb-6">
+              <div className="mb-3 flex items-center gap-2">
+                {/* Icon — clickable to open emoji picker */}
+                <button
+                  ref={iconBtnRef}
+                  onClick={openIconPicker}
+                  disabled={page.is_locked}
+                  className="text-4xl leading-none select-none rounded-lg p-0.5 hover:bg-neutral-800 transition-colors disabled:cursor-not-allowed disabled:opacity-50"
+                  title="Change icon"
+                >
+                  {page.icon || '📄'}
+                </button>
+                {/* Color pill — clickable to open color picker */}
+                <button
+                  ref={colorBtnRef}
+                  onClick={openColorPicker}
+                  disabled={page.is_locked}
+                  className="inline-flex items-center gap-1.5 rounded px-2 py-0.5 bg-neutral-800 hover:bg-neutral-700 transition-colors disabled:cursor-not-allowed disabled:opacity-50 shrink-0"
+                  title="Change page color"
+                >
+                  <span
+                    className="h-3.5 w-5 rounded-sm shrink-0"
+                    style={{ backgroundColor: effectiveColor }}
+                  />
+                  <span className="text-xs text-neutral-400">Color</span>
+                </button>
 
-          {/* Icon + title */}
-          <div className="mb-6">
-            <div className="mb-3 flex items-center gap-2">
-              {/* Icon — clickable to open emoji picker */}
-              <button
-                ref={iconBtnRef}
-                onClick={openIconPicker}
-                disabled={page.is_locked}
-                className="text-4xl leading-none select-none rounded-lg p-0.5 hover:bg-neutral-800 transition-colors disabled:cursor-not-allowed disabled:opacity-50"
-                title="Change icon"
-              >
-                {page.icon || '📄'}
-              </button>
-              {/* Color pill — clickable to open color picker */}
-              <button
-                ref={colorBtnRef}
-                onClick={openColorPicker}
-                disabled={page.is_locked}
-                className="inline-flex items-center gap-1.5 rounded px-2 py-0.5 bg-neutral-800 hover:bg-neutral-700 transition-colors disabled:cursor-not-allowed disabled:opacity-50 shrink-0"
-                title="Change page color"
-              >
-                <span
-                  className="h-3.5 w-5 rounded-sm shrink-0"
-                  style={{ backgroundColor: effectiveColor }}
+              </div>
+
+              {/* Title row — input + optional type badge */}
+              <div className="flex items-center gap-2 flex-wrap">
+                <input
+                  ref={titleInputRef}
+                  value={title}
+                  onChange={handleTitleChange}
+                  placeholder="Untitled"
+                  disabled={page.is_locked}
+                  className={[
+                    'flex-1 min-w-0 bg-transparent text-3xl font-bold text-neutral-100 placeholder-neutral-700',
+                    'border-none outline-none ring-0',
+                    'disabled:cursor-not-allowed disabled:opacity-50',
+                  ].join(' ')}
+                  aria-label="Page title"
                 />
-                <span className="text-xs text-neutral-400">Color</span>
-              </button>
+                {currentType && (
+                  <button
+                    ref={typeBadgeRef}
+                    onClick={openTypePicker}
+                    className="inline-flex items-center gap-1 rounded-full bg-neutral-800 px-2 py-0.5 text-xs text-neutral-400 hover:bg-neutral-700 hover:text-neutral-300 transition-colors shrink-0"
+                    title="Change page type"
+                  >
+                    {currentType.icon || '📄'} {currentType.name}
+                  </button>
+                )}
+              </div>
 
+              {/* Properties row — typed metadata fields below the title */}
+              <div className="mt-2">
+                <PropertyBar
+                  workspaceId={workspaceId}
+                  pageId={pageId}
+                  readOnly={page.is_locked}
+                  customPageTypeId={page.custom_page_type ?? null}
+                />
+              </div>
             </div>
 
-            {/* Title row — input + optional type badge */}
-            <div className="flex items-center gap-2 flex-wrap">
-              <input
-                ref={titleInputRef}
-                value={title}
-                onChange={handleTitleChange}
-                placeholder="Untitled"
-                disabled={page.is_locked}
-                className={[
-                  'flex-1 min-w-0 bg-transparent text-3xl font-bold text-neutral-100 placeholder-neutral-700',
-                  'border-none outline-none ring-0',
-                  'disabled:cursor-not-allowed disabled:opacity-50',
-                ].join(' ')}
-                aria-label="Page title"
-              />
-              {currentType && (
-                <button
-                  ref={typeBadgeRef}
-                  onClick={openTypePicker}
-                  className="inline-flex items-center gap-1 rounded-full bg-neutral-800 px-2 py-0.5 text-xs text-neutral-400 hover:bg-neutral-700 hover:text-neutral-300 transition-colors shrink-0"
-                  title="Change page type"
-                >
-                  {currentType.icon || '📄'} {currentType.name}
-                </button>
-              )}
-            </div>
-
-            {/* Properties row — typed metadata fields below the title */}
-            <div className="mt-2">
-              <PropertyBar
-                workspaceId={workspaceId}
-                pageId={pageId}
-                readOnly={page.is_locked}
-                customPageTypeId={page.custom_page_type ?? null}
-              />
-            </div>
           </div>
-
-        </div>{/* end header section */}
+        )}{/* end header section */}
 
         {/* ── Content section — editor (document) or canvas ─────────────── */}
         {isCanvas ? (
 
           // ── Canvas mode: fills remaining flex height, full width ────────
-          <div className="flex-1 min-h-0">
+          <div className={canvasFullscreen ? 'fixed inset-0 z-50 bg-neutral-950' : 'flex-1 min-h-0'}>
             <CanvasView
               blocks={canvasBlocks}
               pageId={pageId}
@@ -683,7 +852,22 @@ export default function PageEditorRoute() {
               hasCover={!!coverUrl}
               coverExpanded={coverExpanded}
               onToggleCover={() => setCoverExpanded((v) => !v)}
+              fullscreen={canvasFullscreen}
+              showBlockPanel={showBlockPanel}
+              sharedBlocks={sharedBlocks}
             />
+
+            {/* Floating exit-fullscreen button */}
+            {canvasFullscreen && (
+              <button
+                onClick={() => setCanvasFullscreen(false)}
+                title="Exit fullscreen (Esc)"
+                className="fixed right-2 top-2 z-50 flex items-center gap-1 rounded-lg border border-neutral-700 bg-neutral-900/80 px-2 py-1.5 text-xs text-neutral-400 backdrop-blur-sm transition-colors hover:text-neutral-200"
+              >
+                <Minimize2 size={14} />
+                Exit fullscreen
+              </button>
+            )}
           </div>
 
         ) : (
@@ -905,4 +1089,3 @@ export default function PageEditorRoute() {
     </>
   );
 }
-

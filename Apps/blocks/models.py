@@ -39,6 +39,7 @@ class Block(EncryptableMixin, AIPermissionMixin, BaseModel):
         DRAWING = 'drawing', 'Drawing'
         MINDMAP = 'mindmap', 'Mind Map'
         STICKY  = 'sticky',  'Sticky Note'
+        RICH    = 'rich',    'Rich Block'
         # ── Business (Phase 3) ────────────────────────────────
         TIMER         = 'timer',         'Time Tracker'
         INVOICE_BLOCK = 'invoice_block', 'Invoice'
@@ -85,6 +86,9 @@ class Block(EncryptableMixin, AIPermissionMixin, BaseModel):
     canvas_w = models.FloatField(null=True, blank=True)
     canvas_h = models.FloatField(null=True, blank=True)
     canvas_z = models.IntegerField(default=0)
+
+    # ── Canvas styling ────────────────────────────────────────
+    bg_color = models.CharField(max_length=20, blank=True, default='')
 
     # ── Visibility ────────────────────────────────────────────
     doc_visible    = models.BooleanField(default=True)

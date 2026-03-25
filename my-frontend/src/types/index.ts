@@ -86,6 +86,7 @@ export type BlockType =
   | 'drawing'
   | 'mindmap'
   | 'sticky'
+  | 'rich'
   | 'timer'
   | 'invoice_block'
   | 'bookmark'
@@ -261,6 +262,7 @@ export interface Block {
   canvas_z: number | null;
   doc_visible: boolean;
   canvas_visible: boolean;
+  bg_color: string;
   enc_tier: EncTier;
   ai_consent: AiConsent;
   is_locked: boolean;
@@ -378,6 +380,7 @@ export interface UpdateBlockPayload {
   canvas_z?: number | null;
   doc_visible?: boolean;
   canvas_visible?: boolean;
+  bg_color?: string;
 }
 
 export interface ReorderBlocksPayload {

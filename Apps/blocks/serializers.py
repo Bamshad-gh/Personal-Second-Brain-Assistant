@@ -26,6 +26,7 @@ class BlockSerializer(serializers.ModelSerializer):
             'canvas_z',
             'doc_visible',
             'canvas_visible',
+            'bg_color',
             'children_count',
             'is_locked',
             'enc_tier',
@@ -50,7 +51,7 @@ class BlockCreateSerializer(serializers.ModelSerializer):
         model = Block
         fields = ['id', 'page', 'parent', 'block_type', 'content', 'order',
                   'canvas_x', 'canvas_y', 'canvas_w', 'canvas_h', 'canvas_z',
-                  'doc_visible', 'canvas_visible']
+                  'doc_visible', 'canvas_visible', 'bg_color']
         read_only_fields = ['id']
 
     def validate_parent(self, value):
@@ -73,7 +74,7 @@ class BlockUpdateSerializer(serializers.ModelSerializer):
         model = Block
         fields = ['content', 'order', 'parent',
                   'canvas_x', 'canvas_y', 'canvas_w', 'canvas_h', 'canvas_z',
-                  'doc_visible', 'canvas_visible']
+                  'doc_visible', 'canvas_visible', 'bg_color']
 
 
 class BlockTreeSerializer(serializers.ModelSerializer):

@@ -56,9 +56,9 @@ body {
 /* --- Custom Scrollbar --- */
 ::-webkit-scrollbar { width: 5px; height: 5px; }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { 
-  background-color: #2a2a2a; 
-  border-radius: 9999px; 
+::-webkit-scrollbar-thumb {
+  background-color: #2a2a2a;
+  border-radius: 9999px;
 }
 ::-webkit-scrollbar-thumb:hover { background-color: #404040; }
 
@@ -189,9 +189,11 @@ body {
    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
 
 .tiptap-editor .ProseMirror { outline: none; min-height: 60vh; padding: 0 0 4rem; }
+.canvas-rich-editor .ProseMirror { outline: none; min-height: 12rem; padding: 0; }
 
 /* Headings — Tailwind preflight resets font-size/weight to inherit, so we must be explicit */
-.tiptap-editor .ProseMirror h1 {
+.tiptap-editor .ProseMirror h1,
+.canvas-rich-editor .ProseMirror h1 {
   font-size: 2rem;
   font-weight: 700;
   color: #f5f5f5;
@@ -199,7 +201,8 @@ body {
   margin-bottom: 0.5rem;
   line-height: 1.2;
 }
-.tiptap-editor .ProseMirror h2 {
+.tiptap-editor .ProseMirror h2,
+.canvas-rich-editor .ProseMirror h2 {
   font-size: 1.5rem;
   font-weight: 700;
   color: #e5e5e5;
@@ -207,7 +210,8 @@ body {
   margin-bottom: 0.5rem;
   line-height: 1.3;
 }
-.tiptap-editor .ProseMirror h3 {
+.tiptap-editor .ProseMirror h3,
+.canvas-rich-editor .ProseMirror h3 {
   font-size: 1.25rem;
   font-weight: 600;
   color: #e5e5e5;
@@ -217,43 +221,58 @@ body {
 }
 .light .tiptap-editor .ProseMirror h1,
 .light .tiptap-editor .ProseMirror h2,
-.light .tiptap-editor .ProseMirror h3 { color: #171717; }
+.light .tiptap-editor .ProseMirror h3,
+.light .canvas-rich-editor .ProseMirror h1,
+.light .canvas-rich-editor .ProseMirror h2,
+.light .canvas-rich-editor .ProseMirror h3 { color: #171717; }
 
-.tiptap-editor .ProseMirror p {
+.tiptap-editor .ProseMirror p,
+.canvas-rich-editor .ProseMirror p {
   margin-bottom: 0.75rem;
 }
 
 /* Lists — Tailwind preflight removes list-style and padding */
 .tiptap-editor .ProseMirror ul,
-.tiptap-editor .ProseMirror ol {
+.tiptap-editor .ProseMirror ol,
+.canvas-rich-editor .ProseMirror ul,
+.canvas-rich-editor .ProseMirror ol {
   padding-left: 1.5rem;
   margin-bottom: 0.75rem;
 }
-.tiptap-editor .ProseMirror ul { list-style-type: disc; }
-.tiptap-editor .ProseMirror ol { list-style-type: decimal; }
-.tiptap-editor .ProseMirror li { margin-bottom: 0.25rem; }
-.tiptap-editor .ProseMirror li p { margin-bottom: 0; }
+.tiptap-editor .ProseMirror ul,
+.canvas-rich-editor .ProseMirror ul { list-style-type: disc; }
+.tiptap-editor .ProseMirror ol,
+.canvas-rich-editor .ProseMirror ol { list-style-type: decimal; }
+.tiptap-editor .ProseMirror li,
+.canvas-rich-editor .ProseMirror li { margin-bottom: 0.25rem; }
+.tiptap-editor .ProseMirror li p,
+.canvas-rich-editor .ProseMirror li p { margin-bottom: 0; }
 
 /* Blockquote */
-.tiptap-editor .ProseMirror blockquote {
+.tiptap-editor .ProseMirror blockquote,
+.canvas-rich-editor .ProseMirror blockquote {
   border-left: 3px solid #7c3aed;
   padding-left: 1rem;
   margin: 1rem 0;
   color: #a3a3a3;
   font-style: italic;
 }
-.light .tiptap-editor .ProseMirror blockquote { color: #525252; }
+.light .tiptap-editor .ProseMirror blockquote,
+.light .canvas-rich-editor .ProseMirror blockquote { color: #525252; }
 
 /* Horizontal rule */
-.tiptap-editor .ProseMirror hr {
+.tiptap-editor .ProseMirror hr,
+.canvas-rich-editor .ProseMirror hr {
   border: none;
   border-top: 1px solid #262626;
   margin: 1.5rem 0;
 }
-.light .tiptap-editor .ProseMirror hr { border-color: #e5e5e5; }
+.light .tiptap-editor .ProseMirror hr,
+.light .canvas-rich-editor .ProseMirror hr { border-color: #e5e5e5; }
 
 /* Inline code — NOT code blocks (those use CustomCodeBlock with syntax highlighting) */
-.tiptap-editor .ProseMirror :not(pre) > code {
+.tiptap-editor .ProseMirror :not(pre) > code,
+.canvas-rich-editor .ProseMirror :not(pre) > code {
   background: #1f1f1f;
   border: 1px solid #2a2a2a;
   border-radius: 4px;
@@ -262,20 +281,47 @@ body {
   font-size: 0.875em;
   color: #d4a574;
 }
-.light .tiptap-editor .ProseMirror :not(pre) > code {
+.light .tiptap-editor .ProseMirror :not(pre) > code,
+.light .canvas-rich-editor .ProseMirror :not(pre) > code {
   background: #f5f5f5;
   border-color: #e5e5e5;
   color: #b45309;
 }
 
+/* Code blocks (CodeBlockLowlight renders <pre><code>) */
+.tiptap-editor .ProseMirror pre,
+.canvas-rich-editor .ProseMirror pre {
+  background: #1e1e1e;
+  border-radius: 0.5rem;
+  padding: 1rem;
+  overflow-x: auto;
+  font-family: 'Fira Code', 'Cascadia Code', monospace;
+  font-size: 0.875rem;
+  margin: 0.5rem 0;
+}
+.tiptap-editor .ProseMirror pre code,
+.canvas-rich-editor .ProseMirror pre code {
+  background: none;
+  padding: 0;
+  font-size: inherit;
+  color: inherit;
+  border: none;
+  border-radius: 0;
+}
+
 /* Bold / italic — survive Tailwind preflight */
-.tiptap-editor .ProseMirror strong { font-weight: 700; }
-.tiptap-editor .ProseMirror em     { font-style: italic; }
+.tiptap-editor .ProseMirror strong,
+.canvas-rich-editor .ProseMirror strong { font-weight: 700; }
+.tiptap-editor .ProseMirror em,
+.canvas-rich-editor .ProseMirror em     { font-style: italic; }
 
 /* Task List */
-.tiptap-editor .ProseMirror ul[data-type="taskList"] { list-style: none; padding-left: 0; }
-.tiptap-editor .ProseMirror ul[data-type="taskList"] li { display: flex; gap: 0.5rem; align-items: flex-start; }
-.tiptap-editor .ProseMirror ul[data-type="taskList"] li[data-checked="true"] > div {
+.tiptap-editor .ProseMirror ul[data-type="taskList"],
+.canvas-rich-editor .ProseMirror ul[data-type="taskList"] { list-style: none; padding-left: 0; }
+.tiptap-editor .ProseMirror ul[data-type="taskList"] li,
+.canvas-rich-editor .ProseMirror ul[data-type="taskList"] li { display: flex; gap: 0.5rem; align-items: flex-start; }
+.tiptap-editor .ProseMirror ul[data-type="taskList"] li[data-checked="true"] > div,
+.canvas-rich-editor .ProseMirror ul[data-type="taskList"] li[data-checked="true"] > div {
   text-decoration: line-through;
   opacity: 0.5;
 }
@@ -363,7 +409,8 @@ body {
    Uses CSS variables from :root so colors are consistent with the rest of the
    violet accent system. The chip is an atom node so it can never be edited
    in-place — only inserted (via [[ popup) or deleted as a whole. */
-.tiptap-editor .ProseMirror span.page-link-node {
+.tiptap-editor .ProseMirror span.page-link-node,
+.canvas-rich-editor .ProseMirror span.page-link-node {
   color:            var(--violet-light);
   background:       var(--violet-bg);
   border-radius:    4px;
@@ -374,7 +421,8 @@ body {
   font-size:        inherit;
   transition:       background 150ms ease, color 150ms ease;
 }
-.tiptap-editor .ProseMirror span.page-link-node:hover {
+.tiptap-editor .ProseMirror span.page-link-node:hover,
+.canvas-rich-editor .ProseMirror span.page-link-node:hover {
   background: var(--violet-bg-hover);
   /* Slightly brighter text on hover to reinforce it's a link */
   color:      #c4b5fd;
@@ -382,30 +430,37 @@ body {
 
 /* Light mode — the same variables work fine since --violet-bg uses rgba
    with low opacity; they show as a soft violet tint on white backgrounds. */
-.light .tiptap-editor .ProseMirror span.page-link-node {
+.light .tiptap-editor .ProseMirror span.page-link-node,
+.light .canvas-rich-editor .ProseMirror span.page-link-node {
   color: var(--violet);
 }
 
 /* ── Block hover / selected border ──────────────────────────────────────── */
-.tiptap-editor .ProseMirror > * {
+.tiptap-editor .ProseMirror > *,
+.canvas-rich-editor .ProseMirror > * {
   border:        1px solid transparent;
   border-radius: 4px;
   transition:    border-color 100ms ease;
 }
-.tiptap-editor .ProseMirror > *:hover {
+.tiptap-editor .ProseMirror > *:hover,
+.canvas-rich-editor .ProseMirror > *:hover {
   border-color: rgba(139, 92, 246, 0.25);   /* violet-500 @ 25% */
 }
-.tiptap-editor .ProseMirror > *.ProseMirror-selectednode {
+.tiptap-editor .ProseMirror > *.ProseMirror-selectednode,
+.canvas-rich-editor .ProseMirror > *.ProseMirror-selectednode {
   border-color: rgba(139, 92, 246, 0.6);
 }
-.tiptap-editor .ProseMirror > *:focus-within {
+.tiptap-editor .ProseMirror > *:focus-within,
+.canvas-rich-editor .ProseMirror > *:focus-within {
   border-color: rgba(139, 92, 246, 0.4);
 }
 /* Light mode */
-.light .tiptap-editor .ProseMirror > *:hover {
+.light .tiptap-editor .ProseMirror > *:hover,
+.light .canvas-rich-editor .ProseMirror > *:hover {
   border-color: rgba(109, 40, 217, 0.2);
 }
-.light .tiptap-editor .ProseMirror > *.ProseMirror-selectednode {
+.light .tiptap-editor .ProseMirror > *.ProseMirror-selectednode,
+.light .canvas-rich-editor .ProseMirror > *.ProseMirror-selectednode {
   border-color: rgba(109, 40, 217, 0.5);
 }
 
@@ -451,23 +506,25 @@ body {
 }
 
 /* Force Task List to hide default bullets */
-.tiptap-editor .ProseMirror ul[data-type="taskList"] {
+.tiptap-editor .ProseMirror ul[data-type="taskList"],
+.canvas-rich-editor .ProseMirror ul[data-type="taskList"] {
   list-style: none !important; /* Forces bullets to disappear */
   padding: 0 !important;
   margin-left: 0.5rem;
 }
 
-.tiptap-editor .ProseMirror ul[data-type="taskList"] li {
+.tiptap-editor .ProseMirror ul[data-type="taskList"] li,
+.canvas-rich-editor .ProseMirror ul[data-type="taskList"] li {
   display: flex;
   align-items: flex-start;
   margin-bottom: 0.25rem;
 }
 
 /* Ensure the checkbox is visible and spaced */
-.tiptap-editor .ProseMirror ul[data-type="taskList"] input[type="checkbox"] {
+.tiptap-editor .ProseMirror ul[data-type="taskList"] input[type="checkbox"],
+.canvas-rich-editor .ProseMirror ul[data-type="taskList"] input[type="checkbox"] {
   margin-right: 0.75rem;
   margin-top: 0.4rem;
   cursor: pointer;
   flex-shrink: 0; /* Prevents checkbox from squishing */
 }
-

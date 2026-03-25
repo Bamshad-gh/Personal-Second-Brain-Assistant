@@ -65,7 +65,8 @@ import { CanvasBlock }        from './CanvasBlock';
 import { CanvasArrow }        from './CanvasArrow';
 import { CanvasToolbar }      from './CanvasToolbar';
 import { CanvasDocumentCard } from './CanvasDocumentCard';
-import type { Block }         from '@/types';
+import { CanvasRichBlock }    from './CanvasRichBlock';
+import type { Block, BlockType } from '@/types';
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // TYPES
@@ -88,6 +89,12 @@ interface CanvasViewProps {
   coverExpanded?:  boolean;
   /** Toggle cover expanded/collapsed */
   onToggleCover?:  () => void;
+  /** When true the parent has applied fixed inset-0 z-50 — canvas fills viewport */
+  fullscreen?:     boolean;
+  /** When true, show the left-side block-type template panel */
+  showBlockPanel?: boolean;
+  /** Blocks shared between document and canvas (canvas_visible + doc_visible + positioned) */
+  sharedBlocks?:   Block[];
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -96,6 +103,13 @@ interface CanvasViewProps {
 
 const MIN_SCALE = 0.25;
 const MAX_SCALE = 2.0;
+
+const BLOCK_TEMPLATES: { type: string; label: string; icon: string }[] = [
+  { type: 'text',     label: 'Text',    icon: '¶' },
+  { type: 'sticky',   label: 'Sticky',  icon: '★' },
+  { type: 'rich',     label: 'Rich',    icon: '≡' },
+  { type: 'heading1', label: 'Heading', icon: 'H' },
+];
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // HELPERS
@@ -117,6 +131,23 @@ function extractPreviewText(node: unknown, max = 150): string {
   }
   walk(node);
   return parts.join(' ').slice(0, max);
+}
+
+/**
+ * extractSharedBlockText — short label for a shared block in the panel list.
+ * Concatenates text nodes from the block's TipTap JSON, capped at 35 chars.
+ */
+function extractSharedBlockText(block: Block): string {
+  const parts: string[] = [];
+  function walk(n: unknown): void {
+    if (!n || typeof n !== 'object') return;
+    const obj = n as Record<string, unknown>;
+    if (obj.type === 'text' && typeof obj.text === 'string') parts.push(obj.text);
+    if (Array.isArray(obj.content)) obj.content.forEach(walk);
+  }
+  walk(block.content?.json);
+  const text = parts.join(' ').trim();
+  return text.slice(0, 35) || `(${block.block_type} block)`;
 }
 
 /**
@@ -145,6 +176,9 @@ export function CanvasView({
   hasCover,
   coverExpanded,
   onToggleCover,
+  fullscreen = false,
+  showBlockPanel = false,
+  sharedBlocks = [],
 }: CanvasViewProps) {
 
   // ── Pan / zoom state (for rendering) ─────────────────────────────────────
@@ -154,6 +188,32 @@ export function CanvasView({
   const [selectedId,  setSelectedId]  = useState<string | null>(null);
   const [isPanning,   setIsPanning]   = useState(false);
   const [isSpaceDown, setIsSpaceDown] = useState(false);
+
+  // ── Rich block editing state ──────────────────────────────────────────────
+  const [editingBlockId, setEditingBlockId] = useState<string | null>(null);
+
+  // ── Panel tab state ───────────────────────────────────────────────────────
+  const [panelTab, setPanelTab] = useState<'types' | 'shared'>('types');
+
+  // ── Block-template drag ref (HTML5 drag API, tracks which template type is being dragged) ─
+  const draggedTypeRef = useRef<string | null>(null);
+
+  // ── Shared-block drag ref (drag from "Shared" tab to reposition on canvas) ─
+  const draggedSharedBlockIdRef = useRef<string | null>(null);
+
+  // ── Actual rendered block heights (ResizeObserver) ────────────────────────
+  // canvas_h may not reflect auto-height blocks (text/sticky/rich grow with content).
+  // We observe each block's DOM element and use its real height for edge handle dots.
+  const [blockHeights, setBlockHeights] = useState<Record<string, number>>({});
+  const blockElRefs = useRef<Map<string, HTMLElement>>(new Map());
+
+  // Auto-close the rich editor when the user selects a different block
+  useEffect(() => {
+    if (editingBlockId && selectedId !== editingBlockId) {
+      setEditingBlockId(null);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedId]);
 
   // ── Connection arrow state ────────────────────────────────────────────────
   const { data: connections = [] } = useBlockConnections(pageId);
@@ -214,6 +274,36 @@ export function CanvasView({
       }
     });
   }, []); // run once on mount only
+
+  // ── ResizeObserver — track actual rendered block heights ─────────────────
+  // CanvasBlock uses position:absolute so a wrapper div in the Fragment would
+  // have 0 height and can't be observed. Instead we query DOM elements by
+  // data-blockid (added to CanvasBlock's root div) after each render.
+  useEffect(() => {
+    const observer = new ResizeObserver((entries) => {
+      setBlockHeights((prev) => {
+        const next = { ...prev };
+        entries.forEach((entry) => {
+          const id = (entry.target as HTMLElement).dataset.blockid;
+          if (id) next[id] = entry.contentRect.height;
+        });
+        return next;
+      });
+    });
+
+    // Populate blockElRefs by querying the DOM, then observe each element.
+    blockElRefs.current.clear();
+    canvasBlocks.forEach((b) => {
+      const el = containerRef.current?.querySelector<HTMLElement>(`[data-blockid="${b.id}"]`);
+      if (el) {
+        blockElRefs.current.set(b.id, el);
+        observer.observe(el);
+      }
+    });
+
+    return () => observer.disconnect();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [canvasBlocks]);
 
   // ── Space key + Escape listener ───────────────────────────────────────────
   useEffect(() => {
@@ -373,6 +463,26 @@ export function CanvasView({
     });
   }
 
+  function handleAddRich() {
+    const rect = containerRef.current?.getBoundingClientRect();
+    if (!rect) return;
+
+    const cx = (rect.width  / 2 - panXRef.current) / scaleRef.current - 240;
+    const cy = (rect.height / 2 - panYRef.current) / scaleRef.current - 160;
+
+    createBlock.mutate({
+      block_type:     'rich',
+      content:        {},
+      order:          blocks.length + 1,
+      canvas_x:       cx,
+      canvas_y:       cy,
+      canvas_w:       480,
+      canvas_z:       0,
+      canvas_visible: true,
+      doc_visible:    false,
+    });
+  }
+
   // ── Document card preview text ────────────────────────────────────────────
   const contentPreview = extractPreviewText(contentBlock?.content?.json);
 
@@ -431,10 +541,45 @@ export function CanvasView({
       onPointerUp={handlePointerUp}
       onPointerLeave={() => setHoveredBlockId(null)}
       onClick={() => {
+        // Don't deselect while the rich block editor is open — clicks on the
+        // SlashMenuPortal (portaled to document.body) still bubble through the
+        // React tree and would otherwise trigger the editingBlockId auto-close.
+        if (editingBlockId) return;
         setSelectedId(null);
         setSelectedConnectionId(null);
         setConnectingFromId(null);
         setLivePointer(null);
+      }}
+      onDragOver={(e) => {
+        if (draggedTypeRef.current || draggedSharedBlockIdRef.current) e.preventDefault();
+      }}
+      onDrop={(e) => {
+        e.preventDefault();
+        const rect = containerRef.current?.getBoundingClientRect();
+        if (!rect) return;
+        const dropX = (e.clientX - rect.left - panXRef.current) / scaleRef.current;
+        const dropY = (e.clientY - rect.top  - panYRef.current) / scaleRef.current;
+
+        // ── Shared block drop — just reposition the existing block ──────────
+        const sharedId = draggedSharedBlockIdRef.current;
+        if (sharedId) {
+          draggedSharedBlockIdRef.current = null;
+          updateBlockRef.current({ id: sharedId, payload: { canvas_x: dropX, canvas_y: dropY } });
+          return;
+        }
+
+        // ── Template drop — create a new canvas block ────────────────────────
+        const blockType = draggedTypeRef.current;
+        if (!blockType) return;
+        draggedTypeRef.current = null;
+        createBlock.mutate({
+          block_type: blockType as BlockType,
+          content: {},
+          canvas_x: dropX,
+          canvas_y: dropY,
+          canvas_visible: true,
+          doc_visible: false,
+        });
       }}
     >
       {/* ── Transform layer ─────────────────────────────────────────────── */}
@@ -520,7 +665,7 @@ export function CanvasView({
           const blockWithPos: Block = { ...block, canvas_x: pos.x, canvas_y: pos.y };
 
           const bw = block.canvas_w ?? 300;
-          const bh = block.canvas_h ?? 100;
+          const bh = blockHeights[block.id] ?? block.canvas_h ?? 100;
 
           // Handles visible when the block is hovered OR a connection is in progress
           // (in-progress: show all blocks' handles as drop targets).
@@ -555,6 +700,10 @@ export function CanvasView({
                 onContentSave={(_blockId, json) =>
                   updateBlock.mutate({ id: block.id, payload: { content: { json } } })
                 }
+                onEditStart={() => setEditingBlockId(block.id)}
+                onColorChange={(color) =>
+                  updateBlock.mutate({ id: block.id, payload: { bg_color: color } })
+                }
               />
 
               {/* ── Edge connection handles ──────────────────────────────────
@@ -566,20 +715,24 @@ export function CanvasView({
               {showHandles && edgeHandles.map(handle => (
                 <div
                   key={handle.id}
+                  title="Drag to connect"
                   style={{
                     position:     'absolute',
                     left:          handle.left,
                     top:           handle.top,
-                    transform:    'translate(-50%, -50%)',
-                    width:         14,
-                    height:        14,
-                    borderRadius: '50%',
-                    background:   '#7c3aed',
-                    border:       '2px solid #c4b5fd',
+                    transform:    'translate(-50%, -50%) rotate(45deg)',
+                    width:         12,
+                    height:        12,
+                    borderRadius: '3px',
+                    background:   '#a78bfa',
+                    border:       '2px solid #ede9fe',
                     cursor:       'crosshair',
                     zIndex:        30,
-                    opacity:       connectingFromId ? 1 : 0.8,
-                    boxShadow:    '0 0 6px #7c3aed88',
+                    opacity:       connectingFromId ? 1 : 0.85,
+                    boxShadow:    connectingFromId
+                      ? '0 0 10px #a78bfa99, inset 0 0 0 2px white'
+                      : 'inset 0 0 0 2px white',
+                    animation:    connectingFromId ? 'pulse 1.5s infinite' : 'none',
                   }}
                   onPointerDown={(e) => {
                     e.stopPropagation();
@@ -592,7 +745,103 @@ export function CanvasView({
             </Fragment>
           );
         })}
+
+        {/* ── Rich block editor overlay ──────────────────────────────────── */}
+        {editingBlockId && (() => {
+          const eb = canvasBlocks.find(b => b.id === editingBlockId);
+          if (!eb) return null;
+          return (
+            <CanvasRichBlock
+              block={eb}
+              onSave={(json) => updateBlockRef.current({ id: eb.id, payload: { content: { json } } })}
+              onClose={() => setEditingBlockId(null)}
+            />
+          );
+        })()}
       </div>
+
+      {/* ── Block panel (left side, outside transform — doesn't pan/zoom) ──── */}
+      {showBlockPanel && (
+        <div className="absolute left-0 top-0 bottom-0 w-56 z-20 bg-neutral-900/95 backdrop-blur-sm border-r border-neutral-800 flex flex-col">
+
+          {/* ── Tab bar ────────────────────────────────────────────────────── */}
+          <div className="flex border-b border-neutral-800 shrink-0">
+            <button
+              onClick={() => setPanelTab('types')}
+              className={[
+                'flex-1 py-2 text-xs transition-colors',
+                panelTab === 'types'
+                  ? 'text-violet-400 border-b-2 border-violet-500'
+                  : 'text-neutral-500 hover:text-neutral-300',
+              ].join(' ')}
+            >
+              Block Types
+            </button>
+            <button
+              onClick={() => setPanelTab('shared')}
+              className={[
+                'flex-1 py-2 text-xs transition-colors',
+                panelTab === 'shared'
+                  ? 'text-violet-400 border-b-2 border-violet-500'
+                  : 'text-neutral-500 hover:text-neutral-300',
+              ].join(' ')}
+            >
+              Shared
+              {sharedBlocks.length > 0 && (
+                <span className="ml-1 text-[10px] bg-violet-900/40 text-violet-400 rounded px-1">
+                  {sharedBlocks.length}
+                </span>
+              )}
+            </button>
+          </div>
+
+          {/* ── Types tab — draggable block-type templates ───────────────── */}
+          {panelTab === 'types' && (
+            <div className="overflow-y-auto flex-1">
+              {BLOCK_TEMPLATES.map((t) => (
+                <div
+                  key={t.type}
+                  draggable
+                  onDragStart={() => { draggedTypeRef.current = t.type; }}
+                  onDragEnd={() => { draggedTypeRef.current = null; }}
+                  className="mx-2 my-1 rounded-lg border border-neutral-700 bg-neutral-800 px-3 py-2 cursor-grab text-xs text-neutral-300 select-none flex items-center gap-2 hover:bg-neutral-700 transition-colors"
+                >
+                  <span className="text-neutral-400 w-4 text-center shrink-0">{t.icon}</span>
+                  {t.label}
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* ── Shared tab — blocks visible in both doc and canvas ─────────── */}
+          {panelTab === 'shared' && (
+            <div className="overflow-y-auto flex-1">
+              {sharedBlocks.length === 0 ? (
+                <p className="text-xs text-neutral-600 px-3 py-4 text-center">
+                  No shared blocks yet.{' '}
+                  Toggle blocks in document mode to share them here.
+                </p>
+              ) : (
+                sharedBlocks.map((b) => (
+                  <div
+                    key={b.id}
+                    draggable
+                    onDragStart={() => { draggedSharedBlockIdRef.current = b.id; }}
+                    onDragEnd={() => { draggedSharedBlockIdRef.current = null; }}
+                    className="mx-2 my-1 rounded-lg border border-neutral-700 bg-neutral-800 px-3 py-2 cursor-grab text-xs text-neutral-300 select-none hover:bg-neutral-700 transition-colors"
+                  >
+                    <span className="text-neutral-500 text-[10px] uppercase mr-1">
+                      {b.block_type}
+                    </span>
+                    {extractSharedBlockText(b)}
+                  </div>
+                ))
+              )}
+            </div>
+          )}
+
+        </div>
+      )}
 
       {/* ── Canvas toolbar (fixed, bottom-centre) ───────────────────────── */}
       {!readOnly && (
@@ -602,6 +851,7 @@ export function CanvasView({
           onZoomOut={() => updateScale(Math.max(MIN_SCALE, scaleRef.current / 1.1))}
           onAddText={() => addBlock('text')}
           onAddSticky={() => addBlock('sticky')}
+          onAddRich={handleAddRich}
           onSwitchToDoc={onSwitchToDoc}
           hasCover={hasCover}
           coverExpanded={coverExpanded}

@@ -173,7 +173,7 @@ export function SidebarItem({
         'min-h-8.5 select-none transition-all duration-100',
         isActive
           ? 'sidebar-item-active'
-          : 'text-neutral-400 hover:bg-neutral-800/60 hover:text-neutral-200',
+          : 'text-neutral-700 dark:text-neutral-400 hover:bg-neutral-100 dark:hover:bg-neutral-800/60 hover:text-neutral-900 dark:hover:text-neutral-200',
       ].join(' ')}
       style={{ paddingLeft: `${8 + depth * 16}px` }}
       onClick={() => { if (!isRenaming) onSelect(page); }}
@@ -223,7 +223,7 @@ export function SidebarItem({
         <span
           className={[
             'flex-1 truncate text-sm leading-tight',
-            isActive ? 'font-medium text-neutral-100' : '',
+            isActive ? 'font-medium text-neutral-900 dark:text-neutral-100' : '',
           ].join(' ')}
         >
           {page.title || 'Untitled'}
