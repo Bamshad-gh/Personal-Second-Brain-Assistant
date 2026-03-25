@@ -32,12 +32,12 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import {
   X, Sparkles, Send, RotateCcw, Copy, Check,
-  FileText, Wand2, MessageSquare, Plus,
+  FileText, Wand2, MessageSquare, Plus, Trash2,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { aiApi } from '@/lib/api';
-import type { AiChatMessage, AiActionDefinition } from '@/types';
+import type { AiChatMessage, AiActionDefinition, AiQuota } from '@/types';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Emoji lookup — maps action_type → display emoji
@@ -95,11 +95,14 @@ export function AiPanel({
   pendingAction,
   onPendingActionHandled,
 }: AiPanelProps) {
+  const queryClient = useQueryClient();
+
   const [tab,            setTab]            = useState<Tab>('actions');
   const [actionResult,   setActionResult]   = useState<string | null>(null);
   const [activeActionId, setActiveActionId] = useState<string | null>(null);
   const [isActioning,    setIsActioning]    = useState(false);
   const [copied,         setCopied]         = useState(false);
+  const [quotaError,     setQuotaError]     = useState(false);
 
   // ── Translate UI state ─────────────────────────────────────────────────────
   const [translateOpen,  setTranslateOpen]  = useState(false);
@@ -126,6 +129,29 @@ export function AiPanel({
   const textActions = actionDefs.filter((a) => a.category === 'text');
   const codeActions = actionDefs.filter((a) => a.category === 'code');
 
+  // ── Quota — refresh every minute so the counter stays current ──────────────
+  const { data: quota } = useQuery<AiQuota>({
+    queryKey: ['ai-quota'],
+    queryFn:  aiApi.getQuota,
+    staleTime: 60_000,
+  });
+
+  // ── Persistent chat history from backend ───────────────────────────────────
+  const { data: chatHistory } = useQuery<AiChatMessage[]>({
+    queryKey: ['ai-chat-history', pageId],
+    queryFn:  () => aiApi.getChatHistory(pageId),
+    enabled:  tab === 'chat',
+  });
+
+  // Seed local messages from backend history on first chat-tab load
+  useEffect(() => {
+    if (chatHistory && chatHistory.length > 0 && messages.length === 0) {
+      setMessages(chatHistory);
+    }
+  // Only run when chatHistory first loads — ignore messages changes
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chatHistory]);
+
   // ── Core action runner ─────────────────────────────────────────────────────
 
   const runActionById = useCallback(async (
@@ -140,17 +166,25 @@ export function AiPanel({
     setIsActioning(true);
     setActiveActionId(actionType);
     setActionResult(null);
+    setQuotaError(false);
 
     try {
       const { result } = await aiApi.action({ action_type: actionType, content, extra });
       setActionResult(result);
     } catch (err: unknown) {
-      const msg = (err as { message?: string })?.message ?? 'AI request failed.';
-      toast.error(msg);
+      const apiErr = err as { message?: string; statusCode?: number };
+      if (apiErr.statusCode === 429) {
+        // Quota exceeded — show dedicated UI and refresh quota counter
+        setQuotaError(true);
+        void queryClient.invalidateQueries({ queryKey: ['ai-quota'] });
+      } else {
+        const msg = apiErr.message ?? 'AI request failed.';
+        toast.error(msg);
+      }
     } finally {
       setIsActioning(false);
     }
-  }, []);
+  }, [queryClient]);
 
   function getContent(): string {
     return selectedText?.trim() || pageContent;
@@ -273,6 +307,13 @@ export function AiPanel({
             </div>
           )}
 
+          {/* Quota exceeded error banner */}
+          {quotaError && (
+            <div className="mx-3 mt-2 rounded-lg bg-red-900/20 border border-red-700/50 px-3 py-2 text-xs text-red-300">
+              Daily AI limit reached. Upgrade to Pro for more actions.
+            </div>
+          )}
+
           {/* Action buttons */}
           <div className="flex-1 overflow-y-auto p-3 space-y-1">
 
@@ -344,6 +385,28 @@ export function AiPanel({
               </div>
             )}
           </div>
+
+          {/* Quota footer */}
+          {quota && (
+            <div className="px-3 py-2 border-t border-neutral-800 text-xs text-neutral-500">
+              {quota.daily_actions_limit != null && (
+                <div className="flex justify-between">
+                  <span>AI usage today</span>
+                  <span className={
+                    quota.daily_actions_used >= quota.daily_actions_limit
+                      ? 'text-red-400'
+                      : 'text-neutral-400'
+                  }>
+                    {quota.daily_actions_used}/{quota.daily_actions_limit} actions
+                  </span>
+                </div>
+              )}
+              {quota.tier === 'free' && quota.daily_actions_limit != null &&
+               quota.daily_actions_used >= quota.daily_actions_limit && (
+                <p className="mt-1 text-red-400">Daily limit reached. Upgrade for more.</p>
+              )}
+            </div>
+          )}
 
           {/* Result panel */}
           {actionResult && (
@@ -466,14 +529,28 @@ export function AiPanel({
             <div ref={chatEndRef} />
           </div>
 
-          {/* Clear chat button */}
+          {/* Clear chat button — clears both local state and backend history */}
           {messages.length > 0 && (
-            <div className="px-3 pb-1">
+            <div className="px-3 pb-1 flex items-center gap-3">
               <button
                 onClick={() => setMessages([])}
                 className="flex items-center gap-1 text-xs text-neutral-600 hover:text-neutral-400 transition-colors"
               >
-                <RotateCcw size={11} /> Clear conversation
+                <RotateCcw size={11} /> Clear local
+              </button>
+              <button
+                onClick={async () => {
+                  setMessages([]);
+                  try {
+                    await aiApi.clearChatHistory(pageId);
+                    void queryClient.invalidateQueries({ queryKey: ['ai-chat-history', pageId] });
+                  } catch {
+                    // Clearing history is best-effort — don't block the user
+                  }
+                }}
+                className="flex items-center gap-1 text-xs text-neutral-600 hover:text-red-400 transition-colors"
+              >
+                <Trash2 size={11} /> Clear history
               </button>
             </div>
           )}

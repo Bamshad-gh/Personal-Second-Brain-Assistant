@@ -134,20 +134,27 @@ AI_PROVIDER = config('AI_PROVIDER', default='anthropic')  # 'anthropic' | 'opena
 # API keys — set these in your .env file, never hardcode them here
 ANTHROPIC_API_KEY = config('ANTHROPIC_API_KEY', default='')
 OPENAI_API_KEY    = config('OPENAI_API_KEY',    default='')
+GROQ_API_KEY = config('GROQ_API_KEY', default='')
 
 # Model IDs per provider.
 # To change the model: update the value here and restart the backend.
 # 'default' = used for most actions (more capable)
 # 'fast'    = used for quick/simple actions (cheaper, faster)
+
 AI_MODELS = {
     'anthropic': {
-        'default': 'claude-sonnet-4-6',          # Claude Sonnet 4.6
-        'fast':    'claude-haiku-4-5-20251001',   # Claude Haiku 4.5
+        'default': 'claude-3-5-sonnet-20241022',
+        'fast':    'claude-3-5-haiku-20241022', 
     },
     'openai': {
         'default': 'gpt-4o',
         'fast':    'gpt-4o-mini',
     },
+    'groq': {
+        # Groq currently supports Llama 3 and Mixtral
+        'default': 'llama-3.3-70b-versatile', 
+        'fast':    'llama-3.1-8b-instant',   
+    }
 }
 
 # Max tokens the AI can return in a single response

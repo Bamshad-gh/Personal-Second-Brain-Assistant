@@ -5,11 +5,13 @@ AI API views.
 ════════════════════════════════════════════════════════════════════
 ENDPOINT MAP
 ════════════════════════════════════════════════════════════════════
-  GET  /api/ai/actions/     → AiActionsView   (list available action metadata)
-  POST /api/ai/action/      → AiActionView    (predefined text actions)
-  POST /api/ai/chat/        → AiChatView      (free-form conversation)
-  GET  /api/ai/usage/       → AiUsageView     (token usage summary)
-  POST /api/ai/transcribe/  → TranscribeView  (Whisper audio → text)
+  GET  /api/ai/actions/      → AiActionsView      (list available action metadata)
+  POST /api/ai/action/       → AiActionView       (predefined text/code actions)
+  POST /api/ai/chat/         → AiChatView         (free-form conversation)
+  GET  /api/ai/usage/        → AiUsageView        (token usage summary)
+  GET  /api/ai/quota/        → AiQuotaView        (daily quota + today's usage)
+  GET/DELETE /api/ai/chat/history/ → AiChatHistoryView (persistent chat history)
+  POST /api/ai/transcribe/   → TranscribeView     (Whisper audio → text)
 All registered in: Apps/ai_agent/urls.py → config/urls.py
 ════════════════════════════════════════════════════════════════════
 """
@@ -23,7 +25,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework import status
 
 from .serializers import AiActionSerializer, AiChatSerializer
-from .models import AiUsageLog
+from .models import AiUsageLog, AiUserQuota, AiChatMessage
 from . import services
 
 
@@ -41,6 +43,9 @@ class AiActionView(APIView):
 
     Response:
       { "result": "AI-generated text" }
+
+    Error 429:
+      { "error": "Daily AI limit reached...", "quota_exceeded": true }
     """
 
     permission_classes = [IsAuthenticated]
@@ -72,7 +77,9 @@ class AiActionView(APIView):
             )
 
         try:
-            text, input_tokens, output_tokens = services.run_action(action_type, content, extra)
+            text, input_tokens, output_tokens = services.run_action(
+                action_type, content, extra, user=request.user
+            )
 
             # Log usage — wrapped in try/except so a logging failure never breaks AI
             try:
@@ -80,7 +87,7 @@ class AiActionView(APIView):
                     user=request.user,
                     call_type='action',
                     action_name=action_type,
-                    provider=getattr(services.get_provider(), '__class__', type('', (), {'__name__': 'unknown'})).__name__,
+                    provider=type(services.get_provider()).__name__,
                     model=services.get_model(services.ACTION_DEFINITIONS.get(action_type, {}).get('tier', 'default')),
                     input_tokens=input_tokens,
                     output_tokens=output_tokens,
@@ -90,6 +97,12 @@ class AiActionView(APIView):
 
             return Response({'result': text})
 
+        except PermissionError as e:
+            # Quota exceeded — return 429 with a flag the frontend can check
+            return Response(
+                {'error': str(e), 'quota_exceeded': True},
+                status=status.HTTP_429_TOO_MANY_REQUESTS,
+            )
         except (ImportError, ValueError) as e:
             # Missing package or invalid action
             return Response({'error': str(e)}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
@@ -127,14 +140,18 @@ class AiChatView(APIView):
     POST /api/ai/chat/
 
     Free-form conversation with the AI, optionally grounded in a page's content.
+    Chat history is automatically persisted per user+page and loaded on each request.
 
     Request body:
       messages  (required)  — [{"role": "user"|"assistant", "content": "..."}]
-      page_id   (optional)  — page UUID to use as context
+      page_id   (optional)  — page UUID to use as context + history thread key
       context   (optional)  — extra context text
 
     Response:
       { "reply": "AI response text" }
+
+    Error 429:
+      { "error": "Daily AI limit reached...", "quota_exceeded": true }
     """
 
     permission_classes = [IsAuthenticated]
@@ -156,7 +173,12 @@ class AiChatView(APIView):
                 context = f"{context}\n\n{page_text}".strip()
 
         try:
-            text, input_tokens, output_tokens = services.run_chat(messages, page_context=context)
+            text, input_tokens, output_tokens = services.run_chat(
+                messages,
+                page_context=context,
+                user=request.user,
+                page_id=page_id,
+            )
 
             # Log usage
             try:
@@ -164,7 +186,7 @@ class AiChatView(APIView):
                     user=request.user,
                     call_type='chat',
                     action_name='',
-                    provider=getattr(services.get_provider(), '__class__', type('', (), {'__name__': 'unknown'})).__name__,
+                    provider=type(services.get_provider()).__name__,
                     model=services.get_model('default'),
                     input_tokens=input_tokens,
                     output_tokens=output_tokens,
@@ -174,6 +196,11 @@ class AiChatView(APIView):
 
             return Response({'reply': text})
 
+        except PermissionError as e:
+            return Response(
+                {'error': str(e), 'quota_exceeded': True},
+                status=status.HTTP_429_TOO_MANY_REQUESTS,
+            )
         except (ImportError, ValueError) as e:
             return Response({'error': str(e)}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
         except Exception as e:
@@ -198,7 +225,7 @@ class AiUsageView(APIView):
         "recent": [                   — last 10 calls
           {
             "call_type":    "action" | "chat",
-            "action_name":  str,   — e.g. "summarize", "" for chat
+            "action_name":  str,
             "model":        str,
             "input_tokens": int,
             "output_tokens": int,
@@ -244,6 +271,83 @@ class AiUsageView(APIView):
             'calls_this_month':    calls_this_month,
             'recent':              recent,
         })
+
+
+class AiQuotaView(APIView):
+    """
+    GET /api/ai/quota/
+
+    Returns the current user's tier, limits, and today's usage.
+    Creates a free-tier quota record if the user doesn't have one yet.
+
+    Response shape:
+      {
+        "tier":                  "free" | "pro" | "unlimited",
+        "daily_actions_limit":   int | null,   — null = unlimited
+        "daily_actions_used":    int,           — calls made today (UTC)
+        "daily_tokens_limit":    int | null,    — null = unlimited
+        "daily_tokens_used":     int            — tokens used today (UTC)
+      }
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        quota  = AiUserQuota.get_or_create_for_user(request.user)
+        limits = quota.get_daily_limits()
+
+        today_start = timezone.now().replace(hour=0, minute=0, second=0, microsecond=0)
+        today_qs    = AiUsageLog.objects.filter(user=request.user, created_at__gte=today_start)
+
+        actions_used = today_qs.count()
+        token_agg    = today_qs.aggregate(total=Sum('input_tokens') + Sum('output_tokens'))
+        tokens_used  = token_agg['total'] or 0
+
+        return Response({
+            'tier':                 quota.tier,
+            'daily_actions_limit':  limits['daily_actions'],
+            'daily_actions_used':   actions_used,
+            'daily_tokens_limit':   limits['daily_tokens'],
+            'daily_tokens_used':    tokens_used,
+        })
+
+
+class AiChatHistoryView(APIView):
+    """
+    GET    /api/ai/chat/history/?page={uuid}
+      Returns the last 50 chat messages for this user+page.
+      Response: [{"role": "user"|"assistant"|"system", "content": str, "created_at": ISO}, ...]
+
+    DELETE /api/ai/chat/history/?page={uuid}
+      Clears all chat messages for this user+page.
+      Returns 204 No Content.
+      NOTE: This permanently deletes the thread. The frontend should confirm
+            with the user before calling this endpoint.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        page_id = request.query_params.get('page')
+        qs = AiChatMessage.objects.filter(user=request.user)
+        if page_id:
+            qs = qs.filter(page_id=page_id)
+
+        messages = list(
+            qs.order_by('created_at').values('role', 'content', 'created_at')[:50]
+        )
+        for msg in messages:
+            msg['created_at'] = msg['created_at'].isoformat()
+
+        return Response(messages)
+
+    def delete(self, request):
+        page_id = request.query_params.get('page')
+        qs = AiChatMessage.objects.filter(user=request.user)
+        if page_id:
+            qs = qs.filter(page_id=page_id)
+        qs.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
 
 class TranscribeView(APIView):

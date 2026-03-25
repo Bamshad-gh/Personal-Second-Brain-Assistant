@@ -61,7 +61,9 @@ import type {
   ReorderBlocksPayload,
   AiActionPayload,
   AiActionDefinition,
+  AiQuota,
   AiChatPayload,
+  AiChatMessage,
   AiUsageSummary,
   ApiError,
 } from '@/types';
@@ -590,6 +592,37 @@ export const aiApi = {
   getUsage: async (): Promise<AiUsageSummary> => {
     const { data } = await axiosInstance.get<AiUsageSummary>('/api/ai/usage/');
     return data;
+  },
+
+  /**
+   * GET /api/ai/quota/
+   * Returns the user's tier, daily limits, and today's usage.
+   * staleTime: 60_000 recommended — refreshes every minute in the AI panel.
+   */
+  getQuota: async (): Promise<AiQuota> => {
+    const { data } = await axiosInstance.get<AiQuota>('/api/ai/quota/');
+    return data;
+  },
+
+  /**
+   * GET /api/ai/chat/history/?page={pageId}
+   * Returns the last 50 persistent chat messages for this user+page.
+   * Used to pre-populate the chat tab when the panel opens.
+   */
+  getChatHistory: async (pageId: string): Promise<AiChatMessage[]> => {
+    const { data } = await axiosInstance.get<AiChatMessage[]>(
+      `/api/ai/chat/history/?page=${pageId}`,
+    );
+    return data;
+  },
+
+  /**
+   * DELETE /api/ai/chat/history/?page={pageId}
+   * Clears all persistent chat messages for this user+page.
+   * The frontend should confirm with the user before calling this.
+   */
+  clearChatHistory: async (pageId: string): Promise<void> => {
+    await axiosInstance.delete(`/api/ai/chat/history/?page=${pageId}`);
   },
 };
 

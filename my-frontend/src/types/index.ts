@@ -396,8 +396,12 @@ export interface AiActionPayload {
 
 /** A single message in the AI chat history */
 export interface AiChatMessage {
-  role:    'user' | 'assistant';
-  content: string;
+  /** Present on messages loaded from the backend; absent on locally-created messages */
+  id?:         string;
+  role:        'user' | 'assistant' | 'system';
+  content:     string;
+  /** ISO 8601 — present on messages loaded from the backend */
+  created_at?: string;
 }
 
 /** POST /api/ai/chat/ */
@@ -405,6 +409,15 @@ export interface AiChatPayload {
   messages: AiChatMessage[];
   page_id?:  string;   // page to use as context (optional)
   context?:  string;   // extra context text (optional)
+}
+
+/** Response from GET /api/ai/quota/ — per-user daily limits + today's usage */
+export interface AiQuota {
+  tier:                string;   // 'free' | 'pro' | 'unlimited'
+  daily_actions_limit: number | null;  // null = unlimited
+  daily_actions_used:  number;
+  daily_tokens_limit:  number | null;  // null = unlimited
+  daily_tokens_used:   number;
 }
 
 /** Response item from GET /api/ai/actions/ — metadata for one available action */
