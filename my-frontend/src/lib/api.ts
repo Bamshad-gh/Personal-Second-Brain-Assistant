@@ -60,6 +60,7 @@ import type {
   UpdateBlockPayload,
   ReorderBlocksPayload,
   AiActionPayload,
+  AiActionDefinition,
   AiChatPayload,
   AiUsageSummary,
   ApiError,
@@ -542,14 +543,25 @@ export const blockApi = {
  *   POST /api/ai/chat/    → free-form conversation, optionally grounded in a page
  *
  * WHERE TO ADD NEW ACTIONS:
- *   Backend: Apps/ai_agent/services.py → SYSTEM_PROMPTS + ACTION_MODELS
- *   Frontend panel: src/components/ai/AiPanel.tsx → QUICK_ACTIONS array
+ *   Backend only: Apps/ai_agent/services.py → ACTION_DEFINITIONS dict
+ *   Frontend panel loads actions dynamically via getActions() — no changes needed
  *
  * WHERE TO SWITCH AI PROVIDERS:
  *   Backend: config/settings/base.py → AI_PROVIDER + AI_MODELS
  *   Provider code: Apps/ai_agent/services.py → PROVIDERS dict
  */
 export const aiApi = {
+  /**
+   * GET /api/ai/actions/
+   * Returns the list of available actions (label, description, category).
+   * Does not include system prompts — those stay server-side.
+   * staleTime: Infinity is recommended — the list never changes at runtime.
+   */
+  getActions: async (): Promise<AiActionDefinition[]> => {
+    const { data } = await axiosInstance.get<AiActionDefinition[]>('/api/ai/actions/');
+    return data;
+  },
+
   /**
    * POST /api/ai/action/
    * Runs a predefined action ('summarize', 'expand', 'fix_grammar', etc.)

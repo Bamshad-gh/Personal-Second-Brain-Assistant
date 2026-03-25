@@ -158,36 +158,131 @@ def get_model(tier: str = 'default') -> str:
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Action registry
-# TO ADD A NEW ACTION: add an entry to SYSTEM_PROMPTS + ACTION_MODELS,
-# then add a button in src/components/ai/AiPanel.tsx → QUICK_ACTIONS
-# ─────────────────────────────────────────────────────────────────────────────
+#
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# HOW TO ADD A NEW AI ACTION:
+#   1. Add an entry to ACTION_DEFINITIONS below with:
+#        system      — the system prompt sent to the AI
+#        tier        — 'fast' (cheap/quick) or 'default' (smarter)
+#        label       — human-readable name shown in the UI
+#        description — short subtitle shown below the label
+#        category    — 'text' or 'code' (controls grouping in the panel)
+#        requires_extra (optional) — list of keys the caller must supply
+#                        in the `extra` dict (e.g. ['language'] for translate)
+#   2. That's it — automatically available via POST /api/ai/action/
+#      and GET /api/ai/actions/ (frontend loads the list dynamically)
+#
+# HOW TO CHANGE AI PROVIDER:
+#   Set AI_PROVIDER in Django settings / .env: 'anthropic' or 'openai'
+#   To add a new provider: create a class above (e.g. class GeminiProvider),
+#   add it to the PROVIDERS dict, then set AI_PROVIDER to its key.
+#
+# TIERS:
+#   'fast'    → cheaper/faster model (simple edits, grammar, bullets)
+#   'default' → smarter model (summarize, explain, generate)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-SYSTEM_PROMPTS = {
-    'summarize':        "Summarize the following text concisely in 2-3 sentences. Be direct and clear.",
-    'expand':           "Expand the following text with more detail, examples, and depth. Keep the same tone.",
-    'fix_grammar':      "Fix all grammar, spelling, and punctuation errors. Return only the corrected text.",
-    'shorter':          "Rewrite more concisely while preserving the main points. Return only the rewritten text.",
-    'bullet_points':    "Convert the following text into a clean, structured bullet-point list.",
-    'continue_writing': "Continue writing from where the following text ends. Match the style and tone.",
-    'translate':        "Translate the following text to {language}. Return only the translation.",
-    'explain_simple':   "Explain this as if the reader has no background in the subject.",
-    'improve_tone':     "Improve the writing to be more professional and clear. Return only the improved text.",
-    'ask':              "You are a helpful AI assistant in a notes app. Answer the user's question clearly.",
+ACTION_DEFINITIONS: dict[str, dict] = {
+
+    # ── Text actions ─────────────────────────────────────────────────────────
+    'summarize': {
+        'system':      'Summarize the following text concisely in 2-3 sentences. Be direct and clear.',
+        'tier':        'default',
+        'label':       'Summarize',
+        'description': 'Condense to key points',
+        'category':    'text',
+    },
+    'expand': {
+        'system':      'Expand the following text with more detail, examples, and depth. Keep the same tone.',
+        'tier':        'default',
+        'label':       'Expand',
+        'description': 'Add more detail and depth',
+        'category':    'text',
+    },
+    'fix_grammar': {
+        'system':      'Fix all grammar, spelling, and punctuation errors. Return only the corrected text.',
+        'tier':        'fast',
+        'label':       'Fix Grammar',
+        'description': 'Correct errors',
+        'category':    'text',
+    },
+    'shorter': {
+        'system':      'Rewrite more concisely while preserving the main points. Return only the rewritten text.',
+        'tier':        'fast',
+        'label':       'Make Shorter',
+        'description': 'Reduce length',
+        'category':    'text',
+    },
+    'bullet_points': {
+        'system':      'Convert the following text into a clean, structured bullet-point list.',
+        'tier':        'fast',
+        'label':       'Bullet Points',
+        'description': 'Convert to bullets',
+        'category':    'text',
+    },
+    'continue_writing': {
+        'system':      'Continue writing from where the following text ends. Match the style and tone.',
+        'tier':        'default',
+        'label':       'Continue Writing',
+        'description': 'Keep the momentum going',
+        'category':    'text',
+    },
+    'improve_tone': {
+        'system':      'Improve the writing to be more professional and clear. Return only the improved text.',
+        'tier':        'fast',
+        'label':       'Improve Tone',
+        'description': 'Polish the writing',
+        'category':    'text',
+    },
+    'explain_simple': {
+        'system':      'Explain this as if the reader has no background in the subject.',
+        'tier':        'default',
+        'label':       'Simplify',
+        'description': 'Explain simply',
+        'category':    'text',
+    },
+    'translate': {
+        'system':        'Translate the following text to {language}. Return only the translation.',
+        'tier':          'fast',
+        'label':         'Translate',
+        'description':   'Translate to another language',
+        'category':      'text',
+        'requires_extra': ['language'],
+    },
+
+    # ── Code actions — add more code actions here following the same pattern ──
+    'explain_code': {
+        'system':      'Explain what this code does in plain English. Be clear and concise.',
+        'tier':        'default',
+        'label':       'Explain Code',
+        'description': 'Understand what the code does',
+        'category':    'code',
+    },
+    'add_comments': {
+        'system':      'Add clear, helpful inline comments to this code. Return only the commented code.',
+        'tier':        'default',
+        'label':       'Add Comments',
+        'description': 'Document the code',
+        'category':    'code',
+    },
+    'fix_code': {
+        'system':      'Find and fix bugs in this code. Explain briefly what you fixed, then return the corrected code.',
+        'tier':        'default',
+        'label':       'Fix Code',
+        'description': 'Find and fix bugs',
+        'category':    'code',
+    },
+    'improve_code': {
+        'system':      'Improve this code for readability, performance, and best practices. Return improved code with a brief explanation.',
+        'tier':        'default',
+        'label':       'Improve Code',
+        'description': 'Optimize and clean up',
+        'category':    'code',
+    },
 }
 
-# Which model tier to use per action (cost optimisation)
-ACTION_MODELS = {
-    'fix_grammar':    'fast',
-    'shorter':        'fast',
-    'bullet_points':  'fast',
-    'translate':      'fast',
-    'improve_tone':   'fast',
-    'summarize':      'default',
-    'expand':         'default',
-    'continue_writing': 'default',
-    'explain_simple': 'default',
-    'ask':            'default',
-}
+# Used only by run_chat() — not a user-facing action
+_CHAT_SYSTEM_PROMPT = "You are a helpful AI assistant in a notes app. Answer the user's question clearly."
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -198,21 +293,21 @@ def run_action(action_type: str, content: str, extra: dict | None = None) -> tup
     """
     Run a predefined AI action on some text.
 
-    action_type — key from SYSTEM_PROMPTS above
+    action_type — key from ACTION_DEFINITIONS above
     content     — the text to process
     extra       — optional params injected into the system prompt
                   (e.g. {'language': 'Spanish'} for 'translate')
     Returns (text, input_tokens, output_tokens) tuple.
     Token counts are used by views.py to log AiUsageLog.
     """
-    template = SYSTEM_PROMPTS.get(action_type)
-    if not template:
+    defn = ACTION_DEFINITIONS.get(action_type)
+    if not defn:
         raise ValueError(
-            f"Unknown action '{action_type}'. Valid: {list(SYSTEM_PROMPTS.keys())}"
+            f"Unknown action '{action_type}'. Valid: {list(ACTION_DEFINITIONS.keys())}"
         )
 
-    system   = template.format(**(extra or {})) if extra else template
-    model    = get_model(ACTION_MODELS.get(action_type, 'default'))
+    system   = defn['system'].format(**(extra or {})) if extra else defn['system']
+    model    = get_model(defn.get('tier', 'default'))
     provider = get_provider()
 
     result = provider.chat(
@@ -232,7 +327,7 @@ def run_chat(messages: list, page_context: str = '') -> tuple:
     Returns (text, input_tokens, output_tokens) tuple.
     Token counts are used by views.py to log AiUsageLog.
     """
-    system = SYSTEM_PROMPTS['ask']
+    system = _CHAT_SYSTEM_PROMPT
     if page_context:
         system += (
             "\n\nYou have access to the following page content as context. "

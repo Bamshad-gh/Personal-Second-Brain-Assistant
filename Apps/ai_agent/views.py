@@ -5,6 +5,7 @@ AI API views.
 ════════════════════════════════════════════════════════════════════
 ENDPOINT MAP
 ════════════════════════════════════════════════════════════════════
+  GET  /api/ai/actions/     → AiActionsView   (list available action metadata)
   POST /api/ai/action/      → AiActionView    (predefined text actions)
   POST /api/ai/chat/        → AiChatView      (free-form conversation)
   GET  /api/ai/usage/       → AiUsageView     (token usage summary)
@@ -80,7 +81,7 @@ class AiActionView(APIView):
                     call_type='action',
                     action_name=action_type,
                     provider=getattr(services.get_provider(), '__class__', type('', (), {'__name__': 'unknown'})).__name__,
-                    model=services.get_model(services.ACTION_MODELS.get(action_type, 'default')),
+                    model=services.get_model(services.ACTION_DEFINITIONS.get(action_type, {}).get('tier', 'default')),
                     input_tokens=input_tokens,
                     output_tokens=output_tokens,
                 )
@@ -297,6 +298,46 @@ class TranscribeView(APIView):
                 {'error': f'Transcription error: {str(e)}'},
                 status=status.HTTP_502_BAD_GATEWAY,
             )
+
+
+class AiActionsView(APIView):
+    """
+    GET /api/ai/actions/
+
+    Returns the list of available AI actions with their UI metadata.
+    Does NOT return system prompts — those stay server-side.
+
+    Response shape:
+      [
+        {
+          "action_type":    "summarize",
+          "label":          "Summarize",
+          "description":    "Condense to key points",
+          "category":       "text",
+          "requires_extra": []
+        },
+        ...
+      ]
+
+    The frontend uses this to render action buttons dynamically, so adding
+    a new action in services.py automatically appears in the UI without any
+    frontend code changes.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        actions = [
+            {
+                'action_type':    key,
+                'label':          defn['label'],
+                'description':    defn['description'],
+                'category':       defn['category'],
+                'requires_extra': defn.get('requires_extra', []),
+            }
+            for key, defn in services.ACTION_DEFINITIONS.items()
+        ]
+        return Response(actions)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

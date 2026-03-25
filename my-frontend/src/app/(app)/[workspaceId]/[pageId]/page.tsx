@@ -63,6 +63,7 @@ import { CanvasView }                                 from '@/components/canvas/
 import { PageCover }                                  from '@/components/editor/PageCover';
 import { BottomTabBar }                               from '@/components/editor/BottomTabBar';
 import type { BacklinkPage }                          from '@/types';
+import type { Editor as TipTapEditor }               from '@tiptap/core';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Constants — icon picker + color picker
@@ -288,6 +289,14 @@ export default function PageEditorRoute() {
 
   // ── Track editor plain text (for AI context — document mode only) ────────
   const [editorText, setEditorText] = useState('');
+
+  // ── AI panel enhancements ────────────────────────────────────────────────
+  // editorRef: exposes the TipTap editor instance so AiPanel can insert results
+  const editorRef = useRef<TipTapEditor | null>(null);
+  // selectedText: whatever the user has highlighted in the editor
+  const [selectedText,    setSelectedText]    = useState('');
+  // pendingAiAction: set by the code block toolbar to trigger an action in AiPanel
+  const [pendingAiAction, setPendingAiAction] = useState<{ actionType: string; content: string } | null>(null);
 
   // ── Backlinks (for bottom tab bar) ──────────────────────────────────────
   const { data: backlinks = [] } = useQuery<BacklinkPage[]>({
@@ -884,9 +893,15 @@ export default function PageEditorRoute() {
             {/* TipTap editor — wrapped in error boundary to prevent blank screen on crash */}
             <EditorErrorBoundary>
               <Editor
+                ref={editorRef}
                 initialContent={initialContent}
                 onSave={handleSave}
                 onTextChange={setEditorText}
+                onSelectionChange={setSelectedText}
+                onCodeAction={(actionType, code) => {
+                  if (!aiPanelOpen) toggleAiPanel();
+                  setPendingAiAction({ actionType, content: code });
+                }}
                 readOnly={page.is_locked}
                 workspaceId={workspaceId}
                 pageId={pageId}
@@ -912,6 +927,12 @@ export default function PageEditorRoute() {
           pageId={pageId}
           pageContent={`${title}\n\n${editorText}`}
           onClose={() => toggleAiPanel()}
+          selectedText={selectedText}
+          onInsertResult={(text) => {
+            editorRef.current?.chain().focus().insertContent(text).run();
+          }}
+          pendingAction={pendingAiAction}
+          onPendingActionHandled={() => setPendingAiAction(null)}
         />
       )}
     </div>

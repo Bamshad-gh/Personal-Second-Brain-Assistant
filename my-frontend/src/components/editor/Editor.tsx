@@ -47,7 +47,7 @@
 // IMPORTS — all external and internal dependencies
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-import { useEffect, useRef, useCallback, useState } from 'react';
+import { useEffect, useRef, useCallback, useState, forwardRef, useImperativeHandle } from 'react';
 import { useRouter }                                 from 'next/navigation';
 import { useEditor, EditorContent }                  from '@tiptap/react';
 import type { Editor as TipTapEditor }               from '@tiptap/core';
@@ -97,6 +97,10 @@ interface EditorProps {
   /** Called on every content change with the editor's plain text.
    *  Used by the AI panel to get the page text as context. */
   onTextChange?:        (text: string) => void;
+  /** Called whenever the selection changes; passes the selected text (empty string = no selection) */
+  onSelectionChange?:   (selectedText: string) => void;
+  /** Called when the user clicks an action button in the code block toolbar */
+  onCodeAction?:        (actionType: string, code: string) => void;
   readOnly?:            boolean;
   /** UUID of the current workspace — used by the [[ page link popup */
   workspaceId:          string;
@@ -151,14 +155,16 @@ function useAutosave(
 // COMPONENT — main Editor export
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-export function Editor({
+export const Editor = forwardRef<TipTapEditor, EditorProps>(function Editor({
   initialContent,
   onSave,
   onTextChange,
+  onSelectionChange,
+  onCodeAction,
   readOnly = false,
   workspaceId,
   pageId,
-}: EditorProps) {
+}: EditorProps, ref) {
 
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   // STATE — all useState and useRef declarations
@@ -199,6 +205,9 @@ export function Editor({
   const [hoveredWorkspaceId, setHoveredWorkspaceId] = useState<string | null>(null);
   const hoverTimerRef   = useRef<ReturnType<typeof setTimeout> | null>(null);
   const dismissTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Code block toolbar — true when cursor is inside a code block
+  const [isInCodeBlock, setIsInCodeBlock] = useState(false);
 
   // Block handle — tracks which block the pointer is over for the "+" button
   const [blockHandle, setBlockHandle] = useState<{
@@ -384,6 +393,13 @@ export function Editor({
       triggerSaveRef.current?.();
       if (onTextChange) onTextChange(e.getText());
     },
+
+    onSelectionUpdate({ editor: e }) {
+      const { from, to } = e.state.selection;
+      const text = from !== to ? e.state.doc.textBetween(from, to, ' ') : '';
+      onSelectionChange?.(text);
+      setIsInCodeBlock(e.isActive('codeBlock'));
+    },
   });
 
   // Wire up autosave after editor is created
@@ -391,6 +407,19 @@ export function Editor({
     () => editor?.getJSON() as Record<string, unknown> ?? null,
     onSave,
   );
+
+  // Expose the TipTap editor instance via ref so page.tsx can call
+  // editor.chain().focus().insertContent(text).run() from outside.
+  // editor is guaranteed non-null here because the `if (!editor) return null`
+  // guard above prevents this code path from running when editor is null.
+  useImperativeHandle(ref, () => editor!, [editor]);
+
+  // Returns the text content of the code block the cursor is currently inside.
+  function getCodeBlockText(): string {
+    if (!editor) return '';
+    const { $from } = editor.state.selection;
+    return $from.node($from.depth)?.textContent ?? '';
+  }
 
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   // EFFECTS — triggerSave sync, slash menu listeners, page link listeners,
@@ -966,6 +995,25 @@ export function Editor({
         </BubbleButton>
       </div>
 
+      {/* ── Code block toolbar — appears when cursor is inside a code block ── */}
+      {isInCodeBlock && onCodeAction && (
+        <div className="absolute top-0 right-0 z-20 flex items-center gap-1 rounded-lg
+                        border border-neutral-700 bg-neutral-900 px-2 py-1 shadow-lg">
+          <span className="mr-1 text-[10px] text-neutral-500">Code:</span>
+          {(['explain_code', 'add_comments', 'fix_code'] as const).map((type) => (
+            <button
+              key={type}
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => onCodeAction(type, getCodeBlockText())}
+              className="rounded px-1.5 py-0.5 text-xs text-neutral-400
+                         hover:bg-neutral-800 hover:text-neutral-200 transition-colors"
+            >
+              {({ explain_code: '🔍 Explain', add_comments: '💬 Comment', fix_code: '🐛 Fix' } as Record<string, string>)[type]}
+            </button>
+          ))}
+        </div>
+      )}
+
       {/* ── Editor content ────────────────────────────────────────────────── */}
       <div className="tiptap-editor">
         <EditorContent editor={editor} />
@@ -1009,7 +1057,7 @@ export function Editor({
       )}
     </div>
   );
-}
+});
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // TOOLBAR COMPONENTS — BubbleButton and ColorPickerButton

@@ -407,6 +407,15 @@ export interface AiChatPayload {
   context?:  string;   // extra context text (optional)
 }
 
+/** Response item from GET /api/ai/actions/ — metadata for one available action */
+export interface AiActionDefinition {
+  action_type:    string;
+  label:          string;
+  description:    string;
+  category:       'text' | 'code' | string;
+  requires_extra: string[];
+}
+
 /** Response from GET /api/ai/usage/ — token usage summary for the current user */
 export interface AiUsageSummary {
   total_input_tokens:  number;

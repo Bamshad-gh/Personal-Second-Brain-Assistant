@@ -1,8 +1,11 @@
 # Apps/ai_agent/urls.py
 from django.urls import path
-from .views import AiActionView, AiChatView, AiUsageView, TranscribeView
+from .views import AiActionView, AiChatView, AiUsageView, TranscribeView, AiActionsView
 
 urlpatterns = [
+    # List available actions + metadata (frontend loads dynamically)
+    path('actions/', AiActionsView.as_view(), name='ai-actions'),
+
     # Run a predefined action (summarize, expand, fix_grammar, translate, ...)
     path('action/', AiActionView.as_view(), name='ai-action'),
 
