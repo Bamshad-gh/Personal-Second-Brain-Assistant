@@ -103,6 +103,8 @@ export function AiPanel({
   const [isActioning,    setIsActioning]    = useState(false);
   const [copied,         setCopied]         = useState(false);
   const [quotaError,     setQuotaError]     = useState(false);
+  const [resultReady,    setResultReady]    = useState(false);
+  const resultRef = useRef<HTMLDivElement>(null);
 
   // ── Translate UI state ─────────────────────────────────────────────────────
   const [translateOpen,  setTranslateOpen]  = useState(false);
@@ -171,6 +173,9 @@ export function AiPanel({
     try {
       const { result } = await aiApi.action({ action_type: actionType, content, extra });
       setActionResult(result);
+      setResultReady(true);
+      setTimeout(() => resultRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' }), 100);
+      setTimeout(() => setResultReady(false), 3000);
     } catch (err: unknown) {
       const apiErr = err as { message?: string; statusCode?: number };
       if (apiErr.statusCode === 429) {
@@ -410,9 +415,14 @@ export function AiPanel({
 
           {/* Result panel */}
           {actionResult && (
-            <div className="border-t border-neutral-800 p-3">
+            <div ref={resultRef} className="border-t border-neutral-800 p-3">
               <div className="flex items-center justify-between mb-2">
-                <span className="text-xs font-medium text-neutral-500 uppercase tracking-wider">Result</span>
+                <span className="text-xs font-medium text-neutral-500 uppercase tracking-wider">
+                  Result
+                  {resultReady && (
+                    <span className="ml-2 text-violet-400 animate-pulse">✦ Result ready ↓</span>
+                  )}
+                </span>
                 <div className="flex gap-1">
                   {onInsertResult && (
                     <button
@@ -475,7 +485,7 @@ export function AiPanel({
       {tab === 'chat' && (
         <div className="flex flex-col flex-1 overflow-hidden">
           {/* Messages */}
-          <div className="flex-1 overflow-y-auto p-3 space-y-3">
+          <div className="flex-1 overflow-y-auto min-h-0 p-3 space-y-3">
             {messages.length === 0 && (
               <div className="flex flex-col items-center gap-3 pt-6 text-center">
                 <div
@@ -556,7 +566,7 @@ export function AiPanel({
           )}
 
           {/* Input */}
-          <div className="border-t border-neutral-800 p-3">
+          <div className="shrink-0 border-t border-neutral-800 p-3">
             <div className="flex items-end gap-2 rounded-xl border border-neutral-700 bg-neutral-800/40 px-3 py-2 focus-within:border-violet-500/50 transition-colors">
               <textarea
                 value={chatInput}

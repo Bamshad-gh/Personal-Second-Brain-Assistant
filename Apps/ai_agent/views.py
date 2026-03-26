@@ -103,8 +103,11 @@ class AiActionView(APIView):
                 {'error': str(e), 'quota_exceeded': True},
                 status=status.HTTP_429_TOO_MANY_REQUESTS,
             )
-        except (ImportError, ValueError) as e:
-            # Missing package or invalid action
+        except ValueError as e:
+            # Invalid action_type — run_action() raises ValueError for unknown actions
+            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        except ImportError as e:
+            # Missing AI provider package (e.g. anthropic, openai not installed)
             return Response({'error': str(e)}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
         except Exception as e:
             return Response(

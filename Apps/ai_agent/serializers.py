@@ -3,38 +3,24 @@
 Request/response serializers for AI endpoints.
 
 TO ADD A NEW ACTION TYPE:
-  1. Add it to VALID_ACTIONS below
-  2. Add its system prompt in services.py → SYSTEM_PROMPTS
+  Add its definition to services.py → ACTION_DEFINITIONS.
+  No changes needed here — action_type is validated by run_action() at runtime.
 """
 
 from rest_framework import serializers
-
-# All valid action types — must match SYSTEM_PROMPTS keys in services.py
-VALID_ACTIONS = [
-    'summarize',
-    'expand',
-    'fix_grammar',
-    'shorter',
-    'bullet_points',
-    'continue_writing',
-    'translate',
-    'explain_simple',
-    'improve_tone',
-    'ask',
-]
 
 
 class AiActionSerializer(serializers.Serializer):
     """
     POST /api/ai/action/
 
-    action_type  — which action to run (see VALID_ACTIONS above)
+    action_type  — which action to run (validated by run_action() in services.py)
     content      — the text to process (required)
     page_id      — optional UUID, used to fetch page text if content not provided
     extra        — optional dict of additional params (e.g. {"language": "Spanish"})
     """
 
-    action_type = serializers.ChoiceField(choices=VALID_ACTIONS)
+    action_type = serializers.CharField(max_length=64)
     content     = serializers.CharField(required=False, allow_blank=True, default='')
     page_id     = serializers.UUIDField(required=False, allow_null=True, default=None)
     extra       = serializers.DictField(required=False, allow_null=True, default=None)

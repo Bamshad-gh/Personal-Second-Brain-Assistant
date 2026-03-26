@@ -48,6 +48,7 @@
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 import { useEffect, useRef, useCallback, useState, forwardRef, useImperativeHandle } from 'react';
+import { createPortal } from 'react-dom';
 import { useRouter }                                 from 'next/navigation';
 import { useEditor, EditorContent }                  from '@tiptap/react';
 import type { Editor as TipTapEditor }               from '@tiptap/core';
@@ -101,6 +102,8 @@ interface EditorProps {
   onSelectionChange?:   (selectedText: string) => void;
   /** Called when the user clicks an action button in the code block toolbar */
   onCodeAction?:        (actionType: string, code: string) => void;
+  /** Called when the user clicks an action in the text-selection popup */
+  onSelectionAction?:   (actionType: string, text: string) => void;
   readOnly?:            boolean;
   /** UUID of the current workspace — used by the [[ page link popup */
   workspaceId:          string;
@@ -161,6 +164,7 @@ export const Editor = forwardRef<TipTapEditor, EditorProps>(function Editor({
   onTextChange,
   onSelectionChange,
   onCodeAction,
+  onSelectionAction,
   readOnly = false,
   workspaceId,
   pageId,
@@ -207,7 +211,15 @@ export const Editor = forwardRef<TipTapEditor, EditorProps>(function Editor({
   const dismissTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Code block toolbar — true when cursor is inside a code block
-  const [isInCodeBlock, setIsInCodeBlock] = useState(false);
+  const [isInCodeBlock,  setIsInCodeBlock]  = useState(false);
+  const [codeBlockRect,  setCodeBlockRect]  = useState<DOMRect | null>(null);
+  const lastCodeBlockTextRef               = useRef('');
+
+  // Selection popup — shown above selected text
+  const [selectionPopup, setSelectionPopup] = useState<{ rect: DOMRect; text: string } | null>(null);
+
+  // Mount guard — prevents portals from rendering during SSR
+  const [mounted, setMounted] = useState(false);
 
   // Block handle — tracks which block the pointer is over for the "+" button
   const [blockHandle, setBlockHandle] = useState<{
@@ -398,7 +410,33 @@ export const Editor = forwardRef<TipTapEditor, EditorProps>(function Editor({
       const { from, to } = e.state.selection;
       const text = from !== to ? e.state.doc.textBetween(from, to, ' ') : '';
       onSelectionChange?.(text);
-      setIsInCodeBlock(e.isActive('codeBlock'));
+
+      const isCode = e.isActive('codeBlock');
+      setIsInCodeBlock(isCode);
+      if (isCode) {
+        // Store code block text in ref — safe to read even after mousedown on toolbar
+        const $from = e.state.selection.$from;
+        lastCodeBlockTextRef.current = $from.node($from.depth)?.textContent ?? '';
+        // Measure the <pre> element for portal positioning
+        const domAtPos = e.view.domAtPos(from);
+        const domNode  = domAtPos.node as HTMLElement;
+        const codeEl   = domNode.closest?.('pre') ??
+                         (domNode.parentElement?.closest('pre') ?? null);
+        if (codeEl) setCodeBlockRect(codeEl.getBoundingClientRect());
+      } else {
+        setCodeBlockRect(null);
+      }
+
+      // Selection popup — show for meaningful selections (>10 chars)
+      if (from !== to && text.trim().length > 10) {
+        const domSel = window.getSelection();
+        if (domSel && domSel.rangeCount > 0) {
+          const rect = domSel.getRangeAt(0).getBoundingClientRect();
+          setSelectionPopup({ rect, text });
+        }
+      } else {
+        setSelectionPopup(null);
+      }
     },
   });
 
@@ -415,10 +453,12 @@ export const Editor = forwardRef<TipTapEditor, EditorProps>(function Editor({
   useImperativeHandle(ref, () => editor!, [editor]);
 
   // Returns the text content of the code block the cursor is currently inside.
+  // Reads from the ref first so it works correctly even after a toolbar mousedown.
   function getCodeBlockText(): string {
-    if (!editor) return '';
-    const { $from } = editor.state.selection;
-    return $from.node($from.depth)?.textContent ?? '';
+    return lastCodeBlockTextRef.current ||
+      (editor?.state.selection.$from.node(
+        editor.state.selection.$from.depth
+      )?.textContent ?? '');
   }
 
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -432,6 +472,9 @@ export const Editor = forwardRef<TipTapEditor, EditorProps>(function Editor({
     triggerSaveRef.current = triggerSave;
     return () => { triggerSaveRef.current = null; };
   }, [triggerSave]);
+
+  // Mount guard — portals (code block toolbar, selection popup) are client-only
+  useEffect(() => { setMounted(true); }, []);
 
   // Slash menu event listeners — uses slashEventBus (lib/slashEventBus.ts), a
   // standalone module-level bus that SlashCommand.ts emits on.
@@ -995,10 +1038,20 @@ export const Editor = forwardRef<TipTapEditor, EditorProps>(function Editor({
         </BubbleButton>
       </div>
 
-      {/* ── Code block toolbar — appears when cursor is inside a code block ── */}
-      {isInCodeBlock && onCodeAction && (
-        <div className="absolute top-0 right-0 z-20 flex items-center gap-1 rounded-lg
-                        border border-neutral-700 bg-neutral-900 px-2 py-1 shadow-lg">
+      {/* ── Code block toolbar — portal, floats above the active <pre> ── */}
+      {mounted && isInCodeBlock && onCodeAction && codeBlockRect && createPortal(
+        <div
+          style={{
+            position: 'fixed',
+            top:  codeBlockRect.top + 4,
+            left: codeBlockRect.right + 8 + 280 > window.innerWidth
+              ? codeBlockRect.left - 288
+              : codeBlockRect.right + 8,
+            zIndex: 99999,
+          }}
+          className="flex items-center gap-1 rounded-lg border border-neutral-700
+                     bg-neutral-900 px-2 py-1 shadow-lg"
+        >
           <span className="mr-1 text-[10px] text-neutral-500">Code:</span>
           {(['explain_code', 'add_comments', 'fix_code'] as const).map((type) => (
             <button
@@ -1011,7 +1064,42 @@ export const Editor = forwardRef<TipTapEditor, EditorProps>(function Editor({
               {({ explain_code: '🔍 Explain', add_comments: '💬 Comment', fix_code: '🐛 Fix' } as Record<string, string>)[type]}
             </button>
           ))}
-        </div>
+        </div>,
+        document.body
+      )}
+
+      {/* ── Selection popup — floats above selected text ── */}
+      {mounted && selectionPopup && onSelectionAction && createPortal(
+        <div
+          style={{
+            position: 'fixed',
+            top:  selectionPopup.rect.top - 44,
+            left: Math.max(8, selectionPopup.rect.left + selectionPopup.rect.width / 2 - 120),
+            zIndex: 99999,
+          }}
+          className="flex items-center gap-1 rounded-lg border border-neutral-700
+                     bg-neutral-900/95 backdrop-blur-sm px-2 py-1.5 shadow-xl"
+          onMouseDown={(e) => e.preventDefault()}
+        >
+          {([
+            { type: 'summarize',    label: '📝 Summarize' },
+            { type: 'improve_tone', label: '💎 Improve'   },
+            { type: 'expand',       label: '📖 Expand'    },
+          ] as { type: string; label: string }[]).map(({ type, label }) => (
+            <button
+              key={type}
+              onClick={() => {
+                onSelectionAction(type, selectionPopup.text);
+                setSelectionPopup(null);
+              }}
+              className="rounded px-2 py-0.5 text-xs text-neutral-300
+                         hover:bg-neutral-800 hover:text-white transition-colors whitespace-nowrap"
+            >
+              {label}
+            </button>
+          ))}
+        </div>,
+        document.body
       )}
 
       {/* ── Editor content ────────────────────────────────────────────────── */}

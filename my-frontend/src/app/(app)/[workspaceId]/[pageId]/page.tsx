@@ -902,6 +902,10 @@ export default function PageEditorRoute() {
                   if (!aiPanelOpen) toggleAiPanel();
                   setPendingAiAction({ actionType, content: code });
                 }}
+                onSelectionAction={(actionType, text) => {
+                  if (!aiPanelOpen) toggleAiPanel();
+                  setPendingAiAction({ actionType, content: text });
+                }}
                 readOnly={page.is_locked}
                 workspaceId={workspaceId}
                 pageId={pageId}
