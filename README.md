@@ -1,79 +1,130 @@
-🧠 Intelligent Personal Knowledge Assistant
-A Multi-Agent Workspace OS powered by Hybrid Mamba-Transformer Architecture
+# 🧠 SecondBrain AI Assistant
 
-Combining the reasoning power of LLMs with the efficiency of Mamba architecture for local-first, private knowledge management.
+> A personal workspace OS for developers and solopreneurs — built with Django, Next.js, and multi-agent AI.
 
-Features • Architecture • Tech Stack • License
-🚀 Executive Summary
+![Stack](https://img.shields.io/badge/Django-5.0-green) ![Next.js](https://img.shields.io/badge/Next.js-15-black) ![TypeScript](https://img.shields.io/badge/TypeScript-5.0-blue) ![AI](https://img.shields.io/badge/AI-Claude%20%7C%20Groq%20%7C%20OpenAI-violet)
 
-This project is not just a note-taking app; it is a Multi-Agent Knowledge System. It leverages a team of specialized AI agents to handle intent classification, knowledge retrieval, and voice processing.
+## What I Built
 
-At its core, it utilizes Nemotron 3 Super (Hybrid Mamba-Transformer), allowing for efficient local deployment with significantly reduced memory footprint compared to traditional Transformer models.
-🎯 Key Features
-🤖 Multi-Agent Orchestration
-Built on 
-Microsoft Agent Framework & LangChain.
+A full-stack intelligent workspace combining document editing, infinite canvas mind mapping, AI agents, and a knowledge graph — designed from the ground up as a production system.
 
-    Intent Agent: Classifies user goals instantly.
-    Retrieval Agent: Fetches precise context via CplGrep.
-    Voice Agent: Processes spoken commands.
+**This is not a tutorial project.** Every architectural decision is intentional and production-ready.
 
-	
-🔒 Secure Context Protocol (MCP)
-Implemented 
-Model Context Protocol to bridge AI with local data.
+---
 
-    Sandboxed file system access.
-    Secure interaction with local databases.
-    Privacy-first design: Your data stays local.
+## Technical Highlights
 
-📈 Performance Metrics
+### 🏗 Architecture
+- **Django 5 + DRF** backend with UUID primary keys, soft-delete patterns, and ownership-via-404 security
+- **Next.js 15 App Router** with TypeScript, Zustand, TanStack Query, and optimistic updates
+- **Multi-provider AI system** — swap between Anthropic Claude, OpenAI, and Groq with one config change
+- **Quota enforcement** — per-user daily limits with tier system (free/pro/unlimited), enforced server-side
 
-    Our custom vector search (CplGrep) combined with RAG achieves:
+### ✏️ Document Editor
+- Custom **TipTap 2** extensions: slash commands (`/`), bi-directional page linking (`[[`), page link chips
+- Real-time **autosave** with 500ms debounce and optimistic cache updates
+- **Voice-to-text** via Web Speech API (Chrome) and Whisper fallback
+- Block-level canvas sharing — documents and canvas share the same block model
 
-        📉 85% Reduction in LLM Token Usage
-        🎯 95% Retrieval Precision
+### ∞ Infinite Canvas
+- **Pan/zoom** with pointer capture and transform matrix
+- **Real-time position persistence** — debounced saves on every pointer move, guaranteed save on release
+- **Connection arrows** — SVG bezier curves with directed/undirected modes, flow animations, labels
+- **Rich blocks** — full TipTap editor inside canvas blocks with independent slash command bus
+- **ResizeObserver** for accurate edge handle positioning on dynamically-sized blocks
 
-🏗️ Architecture & Innovation
-1. The Core: Hybrid Mamba-Transformer
+### 🤖 AI Agents
+- **13 actions** across text and code categories — all driven by a single `ACTION_DEFINITIONS` dict
+- Adding a new AI action = one dict entry. No other changes required.
+- **Persistent chat memory** per page per user with auto-compaction at 50 messages
+- **RAG-ready architecture** — ChromaDB + embeddings planned for workspace-wide semantic search
+- Floating selection popup, code block toolbar, context-aware AI panel
 
-We bypassed standard LLMs to deploy Nemotron 3 Super.
+### 🕸 Knowledge Graph
+- D3-force directed graph of all pages and their connections
+- Auto-syncs on every page link insert or delete via `_sync_page_links()`
+- Nodes colored by page type, searchable, click-to-navigate
 
-    Why? Traditional Transformers struggle with long context and memory efficiency.
-    Result: Linear attention scaling allows for massive context windows suitable for extensive knowledge bases, running efficiently on local hardware.
+### 🔒 Security & Data Model
+- Soft-delete everywhere — nothing is ever hard deleted
+- Ownership enforced via `get_object_or_404` — returns 404 not 403 (no information leakage)
+- 12-word wallet encryption architecture planned (fields already scaffolded)
 
-2. The Search: CplGrep + RAG
+---
 
-A custom multi-dimensional vector search engine designed to minimize hallucinations.
+## Stack
 
-    Instead of feeding entire documents to the LLM, CplGrep isolates exact semantic chunks.
-    Drastically reduces API costs and speeds up response time.
+| Layer | Technology |
+|-------|-----------|
+| Backend | Django 5, DRF, PostgreSQL, JWT auth |
+| Frontend | Next.js 15, TypeScript, TipTap 2, Zustand, TanStack Query |
+| AI | Anthropic Claude, Groq (Llama), OpenAI — pluggable provider system |
+| Canvas | Custom pointer event system, SVG bezier, ResizeObserver |
+| Graph | D3-force, custom sync pipeline |
+| Deployment | Railway (Django) + Vercel (Next.js) |
 
-3. The Interface: Interactive Canvas
+---
 
-A Next.js-powered Infinite Canvas UI for mind-mapping.
+## Features
 
-    Visualize nested relationships between notes.
-    AI insights appear as dynamic nodes on the canvas.
-    Built-in schema system for custom types: Project, Client, Financial, Invoice.
+- 📝 Rich document editor with slash commands and page linking
+- ∞ Infinite canvas with mind mapping and connection arrows
+- 🤖 AI agents — summarize, expand, explain code, change tone, translate, chat
+- 🕸 Knowledge graph — visual map of all pages and connections
+- 📋 Page types with custom properties (Client, Project, Invoice templates)
+- 🎨 Block colors, cover images, page themes
+- 🔊 Voice-to-text input
+- 📊 Admin monitoring with per-user AI quota management
 
-🛠️ Tech Stack
-Layer	Technologies
-AI Core	Nemotron LangChain
-Agents	Microsoft Agent Framework
-Vector DB	ChromaDB CplGrep
-Protocol	MCP
-Frontend	Next.js TypeScript
-📄 License
+---
 
-Copyright © 2024 Bamshad. All Rights Reserved.
+## Architecture Decisions Worth Noting
 
-This project is proprietary software. The code is provided for viewing and evaluation purposes only (e.g., by potential employers or recruiters).
+**Why one content block per page?**
+TipTap manages ordering internally. Individual block DB rows would require a custom collaborative editing layer — planned for Phase 2 with X/Y positioning.
 
-    Disclaimer:You are NOT permitted to copy, modify, or distribute this code.Unauthorized use, reproduction, or distribution is strictly prohibited.
+**Why soft-delete everywhere?**
+Audit trail, undo capability, and future version history. Every deletion is reversible.
 
+**Why ownership-via-404 instead of 403?**
+Information leakage prevention. A 403 confirms the resource exists.
 
-Built with ❤️ by Bamshad
- 
+**Why a pluggable AI provider system?**
+Provider landscape changes fast. Swapping from OpenAI to Groq or a self-hosted model should be a config change, not a refactor.
+
+---
+<img width="1047" height="583" alt="screenshot3" src="https://github.com/user-attachments/assets/b5eb9f3c-dac5-4ba7-a818-47665817a2dc" />
+<img width="1207" height="622" alt="P-SCREENSHOT2" src="https://github.com/user-attachments/assets/48cc14ec-b4b3-44fc-9e6a-a9f5c8553975" />
+<img width="247" height="893" alt="P-screenshot1" src="https://github.com/user-attachments/assets/b921d563-6c9a-4839-90a4-74db45f2b98b" />
+
+## Roadmap
+
+- [ ] Fix bugs
+- [ ] improve AI
+- [ ] Add more features
+
+---
+
+## Running Locally
+```bash
+# Backend
+cd SecondBrainAiAssistant
+python -m venv venv && venv/Scripts/activate
+pip install -r requirements.txt
+python manage.py migrate
+python manage.py runserver
+
+# Frontend
+cd my-frontend
+npm install
+npm run dev
+```
+
+Set up `.env` with `SECRET_KEY`, `ANTHROPIC_API_KEY` or `GROQ_API_KEY`, and `AI_PROVIDER`.
+
+---
+
+*Built end-to-end by [Bamshad Ghafouriyan](https://linkedin.com/in/bamshad-ghafouriyan) — Full Stack Developer, Canada*
+
       
 
