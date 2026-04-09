@@ -117,6 +117,13 @@ export function CanvasArrow({
   const [mounted, setMounted] = useState(false);
   useEffect(() => { setMounted(true); }, []);
 
+  // ── Draw-on-create animation ──────────────────────────────────────────────
+  const [drawn, setDrawn] = useState(false);
+  useEffect(() => {
+    const t = setTimeout(() => setDrawn(true), 50);
+    return () => clearTimeout(t);
+  }, []);
+
   // ── Label editing state ───────────────────────────────────────────────────
   const [labelDraft, setLabelDraft] = useState(connection.label);
   const panelRef   = useRef<HTMLDivElement>(null);
@@ -209,10 +216,20 @@ export function CanvasArrow({
           fill="none"
           pointerEvents="none"
           markerEnd={isDirected ? `url(#${markerId})` : undefined}
-          strokeDasharray={isFlow ? '8 4' : undefined}
-          style={isFlow ? {
-            animation: `dashFlow-${connection.id} 0.8s linear infinite`,
-          } : undefined}
+          strokeDasharray={
+            !drawn
+              ? '1000 1000'
+              : isFlow
+                ? '8 4'
+                : undefined
+          }
+          strokeDashoffset={drawn ? 0 : 1000}
+          style={{
+            transition: 'stroke-dashoffset 0.5s ease-out',
+            ...(isFlow && drawn
+              ? { animation: `dashFlow-${connection.id} 0.8s linear infinite` }
+              : {}),
+          }}
         />
 
         {/* Inline label — rendered at midpoint when label is non-empty */}

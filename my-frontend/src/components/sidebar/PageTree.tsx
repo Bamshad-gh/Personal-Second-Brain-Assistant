@@ -11,19 +11,18 @@
  * Props:
  *   pages           — flat array of Page objects from usePages()
  *   activePageId    — currently open page ID (for highlight)
- *   workspaceId     — needed to build navigation URLs
+ *   workspaceId     — needed to build navigation URLs + useMovePage
  *   customTypes     — list of CustomPageType objects for group headers
  *   onCreatePage    — called when user clicks + to add a page or child page;
  *                     accepts optional customPageTypeId for typed creation
  *   onUpdatePage    — called when user renames a page
  *   onDeletePage    — called when user confirms delete
  *
- * Algorithm — flat to tree:
- *   1. Build a Map of id → {page, children[]}
- *   2. Walk the array: if page.parent is null, it's a root node
- *      otherwise, push it into parent's children array
- *   3. Group root nodes by custom_page_type
- *   4. Render group headers + their pages, then untyped pages
+ * Drag-and-drop:
+ *   Each page row is draggable. Dropping ON a page reparents the dragged page.
+ *   Dropping BETWEEN pages (top 30% / bottom 30%) reorders among siblings.
+ *   Visual feedback: violet line for reorder, violet bg tint for reparent.
+ *   Backend: PATCH /api/pages/:id/move/ via useMovePage hook.
  */
 
 'use client';
@@ -32,6 +31,7 @@ import { useState, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import { Plus } from 'lucide-react';
 import { SidebarItem } from './SidebarItem';
+import { useMovePage } from '@/hooks/usePages';
 import type { Page, CustomPageType } from '@/types';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -52,6 +52,8 @@ interface PageTreeProps {
   onUpdatePage:   (pageId: string, payload: { title: string }) => void;
   onDeletePage:   (pageId: string) => void;
 }
+
+type DropPosition = 'before' | 'after' | 'inside';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helper — build tree from flat list
@@ -100,10 +102,16 @@ export function PageTree({
   onUpdatePage,
   onDeletePage,
 }: PageTreeProps) {
-  const router = useRouter();
+  const router   = useRouter();
+  const movePage = useMovePage(workspaceId);
 
   // Track which pages are expanded
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+
+  // ── Drag-and-drop state ───────────────────────────────────────────────────
+  const [draggingId,   setDraggingId]   = useState<string | null>(null);
+  const [dragOverId,   setDragOverId]   = useState<string | null>(null);
+  const [dragPosition, setDragPosition] = useState<DropPosition | null>(null);
 
   // Build the tree only when pages changes
   const tree = useMemo(() => buildTree(pages), [pages]);
@@ -145,12 +153,57 @@ export function PageTree({
     router.push(`/${workspaceId}/${page.id}`);
   }
 
+  // ── Drag-and-drop handlers ────────────────────────────────────────────────
+
+  function handleDragStart(pageId: string) {
+    setDraggingId(pageId);
+  }
+
+  function handleDragEnd() {
+    setDraggingId(null);
+    setDragOverId(null);
+    setDragPosition(null);
+  }
+
+  function handleDragOver(e: React.DragEvent<HTMLDivElement>, pageId: string) {
+    e.preventDefault();
+    setDragOverId(pageId);
+    const rect = e.currentTarget.getBoundingClientRect();
+    const pct  = (e.clientY - rect.top) / rect.height;
+    setDragPosition(pct < 0.3 ? 'before' : pct > 0.7 ? 'after' : 'inside');
+  }
+
+  function handleDrop(e: React.DragEvent<HTMLDivElement>, targetPage: Page) {
+    e.preventDefault();
+    if (!draggingId || draggingId === targetPage.id) {
+      handleDragEnd();
+      return;
+    }
+
+    if (dragPosition === 'inside') {
+      // Reparent: make dragged page a child of the target
+      const siblings = pages.filter((p) => p.parent === targetPage.id);
+      movePage.mutate({ id: draggingId, parentId: targetPage.id, order: siblings.length });
+    } else {
+      // Reorder: insert before or after the target among its siblings
+      const parentId  = targetPage.parent ?? null;
+      const siblings  = pages.filter((p) => (p.parent ?? null) === parentId && p.id !== draggingId);
+      const targetIdx = siblings.findIndex((p) => p.id === targetPage.id);
+      const order     = dragPosition === 'before' ? targetIdx : targetIdx + 1;
+      movePage.mutate({ id: draggingId, parentId, order: Math.max(0, order) });
+    }
+
+    handleDragEnd();
+  }
+
   // ── Recursive renderer ────────────────────────────────────────────────────
 
   function renderNodes(nodes: PageNode[], depth: number): React.ReactNode[] {
     return nodes.flatMap((node) => {
-      const isExpanded = expanded.has(node.page.id);
+      const isExpanded  = expanded.has(node.page.id);
       const hasChildren = node.children.length > 0;
+      const isDragging  = draggingId === node.page.id;
+      const isOver      = dragOverId === node.page.id;
 
       // Effective color: page override → type default → none
       const effectiveColor =
@@ -158,15 +211,39 @@ export function PageTree({
         customTypes.find((t) => t.id === node.page.custom_page_type)?.default_color ||
         null;
 
+      // Build the wrapper style: base color + drag-over highlight
+      const wrapperStyle: React.CSSProperties = {
+        opacity: isDragging ? 0.4 : 1,
+        ...(isOver && dragPosition === 'inside'
+          ? {
+              borderLeft:      '2px solid #7c3aed',
+              backgroundColor: 'rgba(124,58,237,0.08)',
+              borderRadius:    '6px',
+            }
+          : effectiveColor
+          ? {
+              borderLeft:      `2px solid ${effectiveColor}40`,
+              backgroundColor: `${effectiveColor}08`,
+              borderRadius:    '6px',
+            }
+          : undefined),
+      };
+
       return [
         <div
           key={node.page.id}
-          style={effectiveColor ? {
-            borderLeft:      `2px solid ${effectiveColor}40`,
-            backgroundColor: `${effectiveColor}08`,
-            borderRadius:    '6px',
-          } : undefined}
+          draggable
+          onDragStart={() => handleDragStart(node.page.id)}
+          onDragEnd={handleDragEnd}
+          onDragOver={(e) => handleDragOver(e, node.page.id)}
+          onDrop={(e) => handleDrop(e, node.page)}
+          style={wrapperStyle}
         >
+          {/* Drop indicator — insert BEFORE */}
+          {isOver && dragPosition === 'before' && (
+            <div className="mx-2 h-0.5 rounded-full bg-violet-500" />
+          )}
+
           <SidebarItem
             page={node.page}
             depth={depth}
@@ -182,6 +259,11 @@ export function PageTree({
             onDelete={onDeletePage}
             onToggle={toggleExpand}
           />
+
+          {/* Drop indicator — insert AFTER */}
+          {isOver && dragPosition === 'after' && (
+            <div className="mx-2 h-0.5 rounded-full bg-violet-500" />
+          )}
         </div>,
         // Only render children if this node is expanded
         ...(hasChildren && isExpanded ? renderNodes(node.children, depth + 1) : []),

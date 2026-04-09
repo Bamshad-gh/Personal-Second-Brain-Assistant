@@ -157,8 +157,12 @@ body {
 }
 
 .bg-dot-grid {
-  background-image: radial-gradient(circle, #2a2a2a 1px, transparent 1px);
-  background-size: 28px 28px;
+  background-color: #09090b;
+  background-image:
+    radial-gradient(circle, #27272a 1px, transparent 1px),
+    radial-gradient(circle, #18181b 1px, transparent 1px);
+  background-size: 24px 24px, 96px 96px;
+  background-position: 0 0, 12px 12px;
 }
 .light .bg-dot-grid { background-image: radial-gradient(circle, #d4d4d4 1px, transparent 1px); }
 
@@ -188,7 +192,7 @@ body {
    6. EDITOR (TIPTAP & SLASH MENU)
    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
 
-.tiptap-editor .ProseMirror { outline: none; min-height: 60vh; padding: 0 0 4rem; }
+.tiptap-editor .ProseMirror { outline: none; min-height: 60vh; padding: 0 0 4rem; color: inherit !important; }
 .canvas-rich-editor .ProseMirror { outline: none; min-height: 12rem; padding: 0; }
 
 /* Headings — Tailwind preflight resets font-size/weight to inherit, so we must be explicit */
@@ -291,7 +295,8 @@ body {
 /* Code blocks (CodeBlockLowlight renders <pre><code>) */
 .tiptap-editor .ProseMirror pre,
 .canvas-rich-editor .ProseMirror pre {
-  background: #1e1e1e;
+  background: rgba(0,0,0,0.3) !important;
+  color: inherit !important;
   border-radius: 0.5rem;
   padding: 1rem;
   overflow-x: auto;
@@ -492,6 +497,27 @@ body {
   100% { background-position:  200% 0; }
 }
 
+@keyframes blockAppear {
+  from {
+    opacity: 0;
+    transform: scale(0.85) translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+@keyframes arrowDraw {
+  from { stroke-dashoffset: 1000; }
+  to   { stroke-dashoffset: 0; }
+}
+
+@keyframes glowPulse {
+  0%, 100% { box-shadow: 0 0 0 2px #7c3aed44; }
+  50%       { box-shadow: 0 0 0 4px #7c3aed88, 0 0 20px #7c3aed22; }
+}
+
 .animate-shimmer {
   background: linear-gradient(90deg, #1a1a1a 0%, #2a2a2a 50%, #1a1a1a 100%);
   background-size: 200% 100%;
@@ -528,3 +554,15 @@ body {
   cursor: pointer;
   flex-shrink: 0; /* Prevents checkbox from squishing */
 }
+
+/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   SYNTAX HIGHLIGHTING — lowlight token colors (CodeBlock.tsx)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+.hljs-keyword, .hljs-selector-tag  { color: #c792ea; }
+.hljs-string, .hljs-attr           { color: #c3e88d; }
+.hljs-number, .hljs-literal        { color: #f78c6c; }
+.hljs-comment                      { color: #546e7a; font-style: italic; }
+.hljs-function, .hljs-title        { color: #82aaff; }
+.hljs-type, .hljs-class            { color: #ffcb6b; }
+.hljs-variable, .hljs-name         { color: #f07178; }
+.hljs-built_in                     { color: #89ddff; }

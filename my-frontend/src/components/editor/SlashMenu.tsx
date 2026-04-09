@@ -4,16 +4,23 @@
  * What:    The slash command palette rendered by the SlashCommand TipTap extension.
  *          Shows when the user types "/" in the editor, lets them pick a block type.
  *
- * Architecture change from v1:
- *   Old: Editor.tsx detected "/" in onUpdate, positioned the menu via DOM rects,
- *        handled keyboard events via a global listener. Unreliable.
- *   New: SlashCommand.ts (the extension) uses @tiptap/suggestion — a proper
- *        ProseMirror plugin. It calls this component's imperative ref for
- *        keyboard events and passes filtered items as props.
+ * Architecture:
+ *   Old: command() ran TipTap node commands (heading, bulletList, etc.).
+ *        These fail in DocumentEditor's TextBlock because StarterKit disables
+ *        those node types (heading: false, bulletList: false, etc.).
+ *   New: command() only deletes the '/' trigger character. The actual block type
+ *        change is communicated via `item.blockType` — DocumentEditor reads this
+ *        field in its slash command handler and calls onUpdateBlock({ block_type }).
+ *
+ * blockType field:
+ *   Each SlashCommandItem optionally carries a `blockType` string that maps
+ *   directly to the backend block_type registry key. DocumentEditor uses this
+ *   to change the focused block's type via onUpdateBlock, or to create a new
+ *   block (for types like 'divider' where you always want a fresh block).
  *
  * Exports:
- *   COMMANDS       — the full command list (used by SlashCommand.ts for filtering)
- *   SlashMenuList  — the React component (mounted by SlashCommand.ts via ReactRenderer)
+ *   COMMANDS        — the full command list (used by SlashCommand.ts for filtering)
+ *   SlashMenuList   — the React component (mounted by SlashCommand.ts via ReactRenderer)
  *   SlashMenuHandle — the ref type (onKeyDown delegate)
  *   SlashCommandItem — the command shape
  *
@@ -51,7 +58,14 @@ export interface SlashCommandItem {
   description: string;
   group:       SlashCommandGroup;
   icon:        React.ReactNode;
-  /** Receives the TipTap editor instance and inserts the block */
+  /**
+   * The backend block_type this command maps to.
+   * DocumentEditor reads this to call onUpdateBlock({ block_type }) on the
+   * focused block, or onCreateBlock for block types that are always new
+   * (e.g. 'divider'). Undefined = no block type change (future use).
+   */
+  blockType?:  string;
+  /** Receives the TipTap editor instance — only deletes '/' trigger. */
   command:     (editor: Editor) => void;
 }
 
@@ -65,152 +79,146 @@ export interface SlashMenuHandle {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Command list
+// Shared command function
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * All available slash commands.
- *
- * IMPORTANT: use setNode() / toggleXxx() carefully.
- * setNode() is safer when the current node may not be a paragraph (heading, etc.)
- * because it always sets the type regardless of the current state.
- * toggleXxx() flips between active/inactive, which can cause unexpected results
- * when the cursor is already inside a different block type.
- *
- * Image and Callout are placeholders — Phase 2 will implement them.
+ * No-op. The '/' trigger range is already deleted by SlashCommand.ts's
+ * `command` callback via `editor.chain().focus().deleteRange(range).run()`
+ * before this function is called. A second deleteRange attempt would corrupt
+ * real content immediately after the trigger.
  */
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+function deleteSlashTrigger(_editor: Editor): void {
+  // Intentionally empty — deletion handled by SlashCommand extension
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Command list
+// ─────────────────────────────────────────────────────────────────────────────
+
 export const COMMANDS: SlashCommandItem[] = [
   // ── Basic Blocks ──────────────────────────────────────────────────────────
   {
-    id: 'text',
-    label: 'Text',
+    id:          'text',
+    label:       'Text',
     description: 'Plain paragraph',
-    group: 'Basic Blocks',
-    icon: <Type size={15} />,
-    command: (e) => e.chain().focus().setParagraph().run(),
+    group:       'Basic Blocks',
+    icon:        <Type size={15} />,
+    blockType:   'paragraph',
+    command:     deleteSlashTrigger,
   },
   {
-    id: 'heading1',
-    label: 'Heading 1',
+    id:          'heading1',
+    label:       'Heading 1',
     description: 'Large section title',
-    group: 'Basic Blocks',
-    icon: <Heading1 size={15} />,
-    command: (e) => e.chain().focus().setNode('heading', { level: 1 }).run(),
+    group:       'Basic Blocks',
+    icon:        <Heading1 size={15} />,
+    blockType:   'heading1',
+    command:     deleteSlashTrigger,
   },
   {
-    id: 'heading2',
-    label: 'Heading 2',
+    id:          'heading2',
+    label:       'Heading 2',
     description: 'Medium sub-heading',
-    group: 'Basic Blocks',
-    icon: <Heading2 size={15} />,
-    command: (e) => e.chain().focus().setNode('heading', { level: 2 }).run(),
+    group:       'Basic Blocks',
+    icon:        <Heading2 size={15} />,
+    blockType:   'heading2',
+    command:     deleteSlashTrigger,
   },
   {
-    id: 'heading3',
-    label: 'Heading 3',
+    id:          'heading3',
+    label:       'Heading 3',
     description: 'Small sub-section',
-    group: 'Basic Blocks',
-    icon: <Heading3 size={15} />,
-    command: (e) => e.chain().focus().setNode('heading', { level: 3 }).run(),
+    group:       'Basic Blocks',
+    icon:        <Heading3 size={15} />,
+    blockType:   'heading3',
+    command:     deleteSlashTrigger,
   },
   {
-    id: 'bullet',
-    label: 'Bullet List',
-    description: 'Unordered list',
-    group: 'Basic Blocks',
-    icon: <List size={15} />,
-    command: (e) => e.chain().focus().toggleBulletList().run(),
+    id:          'bullet',
+    label:       'Bullet List',
+    description: 'Unordered list item',
+    group:       'Basic Blocks',
+    icon:        <List size={15} />,
+    blockType:   'bullet_item',
+    command:     deleteSlashTrigger,
   },
   {
-    id: 'ordered',
-    label: 'Numbered List',
-    description: 'Ordered list',
-    group: 'Basic Blocks',
-    icon: <ListOrdered size={15} />,
-    command: (e) => e.chain().focus().toggleOrderedList().run(),
+    id:          'numbered',
+    label:       'Numbered List',
+    description: 'Ordered list item',
+    group:       'Basic Blocks',
+    icon:        <ListOrdered size={15} />,
+    blockType:   'numbered_item',
+    command:     deleteSlashTrigger,
   },
   {
-    id: 'todo',
-    label: 'To-do List',
-    description: 'Checkbox task items',
-    group: 'Basic Blocks',
-    icon: <CheckSquare size={15} />,
-    command: (e) => e.chain().focus().toggleTaskList().run(),
+    id:          'todo',
+    label:       'To-do',
+    description: 'Checkbox task item',
+    group:       'Basic Blocks',
+    icon:        <CheckSquare size={15} />,
+    blockType:   'todo_item',
+    command:     deleteSlashTrigger,
   },
   {
-    id: 'toggle',
-    label: 'Toggle',
+    id:          'toggle',
+    label:       'Toggle',
     description: 'Collapsible section',
-    group: 'Basic Blocks',
-    icon: <ChevronRight size={15} />,
-    command: (e) =>
-      e.chain().focus().insertContent({
-        type: 'toggleBlock',
-        attrs: { open: true },
-        content: [{ type: 'paragraph' }],
-      }).run(),
+    group:       'Basic Blocks',
+    icon:        <ChevronRight size={15} />,
+    blockType:   'callout',
+    command:     deleteSlashTrigger,
   },
   {
-    id: 'quote',
-    label: 'Quote',
+    id:          'quote',
+    label:       'Quote',
     description: 'Indented blockquote',
-    group: 'Basic Blocks',
-    icon: <Quote size={15} />,
-    command: (e) => e.chain().focus().toggleBlockquote().run(),
+    group:       'Basic Blocks',
+    icon:        <Quote size={15} />,
+    blockType:   'quote',
+    command:     deleteSlashTrigger,
   },
   {
-    id: 'divider',
-    label: 'Divider',
+    id:          'divider',
+    label:       'Divider',
     description: 'Horizontal rule',
-    group: 'Basic Blocks',
-    icon: <Minus size={15} />,
-    command: (e) => e.chain().focus().setHorizontalRule().run(),
+    group:       'Basic Blocks',
+    icon:        <Minus size={15} />,
+    blockType:   'divider',
+    command:     deleteSlashTrigger,
   },
 
   // ── Media & Code ──────────────────────────────────────────────────────────
   {
-    id: 'code',
-    label: 'Code Block',
+    id:          'code',
+    label:       'Code Block',
     description: 'Syntax-highlighted code',
-    group: 'Media & Code',
-    icon: <Code size={15} />,
-    // setCodeBlock is provided by CustomCodeBlock (CodeBlockLowlight)
-    command: (e) => e.chain().focus().setCodeBlock({ language: 'plaintext' }).run(),
+    group:       'Media & Code',
+    icon:        <Code size={15} />,
+    blockType:   'code',
+    command:     deleteSlashTrigger,
   },
   {
-    id: 'image',
-    label: 'Image',
+    id:          'image',
+    label:       'Image',
     description: 'Upload from your computer',
-    group: 'Media & Code',
-    icon: <Image size={15} />,
-    // Opens a native file picker; reads as base64 and inserts an image node.
-    // Phase 2 will replace base64 with a Django upload endpoint.
-    command: (editor) => {
-      const input = document.createElement('input');
-      input.type   = 'file';
-      input.accept = 'image/*';
-      input.onchange = () => {
-        const file = input.files?.[0];
-        if (!file) return;
-        const reader = new FileReader();
-        reader.onload = (e) => {
-          const src = e.target?.result as string;
-          if (src) editor.chain().focus().setImage({ src }).run();
-        };
-        reader.readAsDataURL(file);
-      };
-      input.click();
-    },
+    group:       'Media & Code',
+    icon:        <Image size={15} />,
+    blockType:   'image',
+    command:     deleteSlashTrigger,
   },
 
   // ── Advanced ──────────────────────────────────────────────────────────────
   {
-    id: 'callout',
-    label: 'Callout',
-    description: 'Coming soon',
-    group: 'Advanced',
-    icon: <Lightbulb size={15} />,
-    command: () => {}, // Phase 2
+    id:          'callout',
+    label:       'Callout',
+    description: 'Highlighted callout box',
+    group:       'Advanced',
+    icon:        <Lightbulb size={15} />,
+    blockType:   'callout',
+    command:     deleteSlashTrigger,
   },
 ];
 
@@ -300,7 +308,7 @@ export const SlashMenuList = forwardRef<SlashMenuHandle, SlashMenuListProps>(
               <p className="slash-menu-group">{group}</p>
 
               {groupItems.map((item) => {
-                const isSelected = globalIndex === selectedIndex;
+                const isSelected   = globalIndex === selectedIndex;
                 const currentIndex = globalIndex;
                 globalIndex++;
 
@@ -310,7 +318,7 @@ export const SlashMenuList = forwardRef<SlashMenuHandle, SlashMenuListProps>(
                     ref={isSelected ? selectedRef : undefined}
                     onClick={() => command(item)}
                     onMouseEnter={() => setSelectedIndex(currentIndex)}
-                    className={`slash-menu-item${isSelected ? ' selected' : ''}${item.command.toString() === '() => {}' ? ' opacity-40 cursor-default' : ''}`}
+                    className={`slash-menu-item${isSelected ? ' selected' : ''}`}
                   >
                     <span className="slash-menu-item-icon">{item.icon}</span>
                     <span className="slash-menu-item-text">

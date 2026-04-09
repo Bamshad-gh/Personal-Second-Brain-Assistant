@@ -55,6 +55,7 @@ class Page(EncryptableMixin, AIPermissionMixin, BaseModel):
         on_delete=models.SET_NULL,
         related_name='children',
     )
+    order = models.IntegerField(default=0, help_text='Sort order among siblings (lower = first)')
     custom_page_type = models.ForeignKey(
         'properties.CustomPageType',
         null=True,
@@ -88,7 +89,7 @@ class Page(EncryptableMixin, AIPermissionMixin, BaseModel):
     )
 
     class Meta:
-        ordering = ['-updated_at']
+        ordering = ['order', '-updated_at']
         indexes  = [
             models.Index(fields=['workspace', 'is_deleted']),
             models.Index(fields=['workspace', 'page_type', 'is_deleted']),

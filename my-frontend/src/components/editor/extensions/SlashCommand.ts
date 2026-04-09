@@ -32,14 +32,14 @@
  *            lib/slashEventBus.ts
  */
 'use client'
-import { Extension }    from '@tiptap/core';
-import Suggestion       from '@tiptap/suggestion';
-import type { SuggestionProps } from '@tiptap/suggestion';
-import { PluginKey }    from '@tiptap/pm/state';
+import { Extension, type Editor } from '@tiptap/core';
+import Suggestion                 from '@tiptap/suggestion';
+import type { SuggestionProps }   from '@tiptap/suggestion';
+import { PluginKey }              from '@tiptap/pm/state';
 
-import { COMMANDS }        from '../SlashMenu';
+import { COMMANDS }              from '../SlashMenu';
 import type { SlashCommandItem } from '../SlashMenu';
-import { slashEventBus }   from '@/lib/slashEventBus';
+import { slashEventBus }         from '@/lib/slashEventBus';
 
 export const SlashCommand = Extension.create({
   name: 'slashCommand',
@@ -65,10 +65,22 @@ export const SlashCommand = Extension.create({
           ),
 
         // Called when the user selects a command (Enter key or click).
-        // Deletes "/" + query text, then runs the selected block command.
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        command: ({ editor, range, props }: any) => {
-          editor.chain().focus().deleteRange(range).run();
+        // The suggestion range covers only the query text AFTER the '/'.
+        // We extend range.from by -1 to also delete the '/' trigger character.
+        // Then runs the selected block command (a no-op in the new system —
+        // block type change is handled by DocumentEditor via item.blockType).
+        command: ({
+          editor,
+          range,
+          props,
+        }: {
+          editor: Editor;
+          range:  { from: number; to: number };
+          props:  SlashCommandItem;
+        }) => {
+          // Extend range by one position left to include the '/' trigger
+          const extendedRange = { from: range.from - 1, to: range.to };
+          editor.chain().focus().deleteRange(extendedRange).run();
           props.command(editor);
         },
 

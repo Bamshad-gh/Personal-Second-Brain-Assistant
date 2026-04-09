@@ -2,20 +2,20 @@
  * types/index.ts
  *
  * What:    Single source of truth for all TypeScript types in this app.
- *          Every interface mirrors a Django model. Every enum mirrors a
- *          Django choices field. Import from here — never define types inline.
+ *          Every interface mirrors a Django model or API response shape.
+ *          Import from here — never define types inline.
  *
- * Analogy: This is your models.py, but for the frontend. Just as Django
- *          models define what data looks like in the database, these types
- *          define what data looks like as it travels over the API.
+ * Analogy: This is your models.py but for the frontend. Just as Django models
+ *          define what data looks like in the database, these types define what
+ *          data looks like as it travels over the API.
  *
- * How to expand: When the backend adds a new model field, add it here first,
- *          then TypeScript will tell you every place in the frontend that
- *          needs to handle it (red squiggles = your checklist).
+ * How to expand: When the backend adds a new model field, add it here first.
+ *          TypeScript will then surface every place in the frontend that needs
+ *          to handle it (red squiggles = your checklist).
  */
 
 // ─────────────────────────────────────────────────────────────────────────────
-// ENUMS — mirror Django's choices fields exactly
+// ENUMS — mirror Django choices fields
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
@@ -38,7 +38,7 @@ export type AiConsent = 'full' | 'metadata' | 'temp_decrypt' | 'disabled';
 
 /**
  * The visual/functional category of a page.
- * This controls the default editor layout and available block types.
+ * Controls the default editor layout and available block types.
  */
 export type PageType =
   | 'note'
@@ -57,98 +57,203 @@ export type PageType =
  */
 export type ViewMode = 'document' | 'canvas';
 
+// ─────────────────────────────────────────────────────────────────────────────
+// BLOCK TYPE SYSTEM — mirrors backend BLOCK_TYPE_REGISTRY in models.py
+// ─────────────────────────────────────────────────────────────────────────────
+
 /**
- * Every block type the editor supports.
- * Each type has its own content shape — see the Block interface below.
- * To add a new block type: add it here, add a case in the editor's
- * renderBlock() function, and handle it in the API serializer.
+ * Logical grouping for block types.
+ * Mirrors the 'category' field in BLOCK_TYPE_REGISTRY.
+ * Used to organise the slash menu and block panel into sections.
+ */
+export type BlockCategory =
+  | 'text'
+  | 'list'
+  | 'code'
+  | 'media'
+  | 'layout'
+  | 'canvas_only'
+  | 'automation'
+  | 'data';
+
+/**
+ * All valid block types — must stay in sync with backend BLOCK_TYPE_REGISTRY.
+ *
+ * HOW TO ADD A NEW TYPE:
+ *   1. Add to backend BLOCK_TYPE_REGISTRY (models.py) — no migration needed
+ *   2. Add the string literal here
+ *   3. Add a renderer case in the editor's block renderer
+ *   4. Add to slash menu if doc_ok; add to canvas panel if canvas_ok
+ *
+ * DEPRECATED (Phase 2 migration pending — kept here so tsc passes while
+ * existing frontend code is updated):
+ *   'text' → use 'paragraph' instead
  */
 export type BlockType =
-  | 'text'
+  // ── Text ──────────────────────────────────────────────────────────────────
+  | 'paragraph'
   | 'heading1'
   | 'heading2'
   | 'heading3'
   | 'quote'
   | 'callout'
-  | 'code'
   | 'divider'
-  | 'todo'
-  | 'toggle'
-  | 'kanban'
-  | 'table'
-  | 'spreadsheet'
+  // ── List ──────────────────────────────────────────────────────────────────
+  | 'bullet_item'
+  | 'numbered_item'
+  | 'todo_item'
+  // ── Code ──────────────────────────────────────────────────────────────────
+  | 'code'
+  // ── Media ─────────────────────────────────────────────────────────────────
   | 'image'
-  | 'video'
   | 'file'
-  | 'form'
-  | 'chart'
-  | 'page_link'
-  | 'drawing'
-  | 'mindmap'
+  | 'pdf'
+  | 'video'
+  // ── Layout ────────────────────────────────────────────────────────────────
+  | 'column_container'
+  | 'column'
+  // ── Canvas-only ───────────────────────────────────────────────────────────
   | 'sticky'
   | 'rich'
-  | 'timer'
-  | 'invoice_block'
-  | 'bookmark'
-  | 'equation'
-  | 'embed'
-  | 'audio'
-  | 'column_layout'
-  | 'breadcrumb';
+  | 'drawing'
+  // ── Automation ────────────────────────────────────────────────────────────
+  | 'automation_trigger'
+  | 'automation_action'
+  | 'ai_agent_block'
+  // ── Data (future) ─────────────────────────────────────────────────────────
+  | 'database'
+  | 'spreadsheet'
+  | 'form'
+  | 'chart'
+  // ── Deprecated — Phase 2 migration pending ────────────────────────────────
+  | 'text';   // → use 'paragraph' — remove once all frontend references updated
+
+/**
+ * Metadata from GET /api/blocks/types/
+ * The frontend can fetch this at runtime to build dynamic menus without
+ * hardcoding block type lists.
+ */
+export interface BlockTypeInfo {
+  block_type:   BlockType;
+  category:     BlockCategory;
+  has_children: boolean;
+  canvas_ok:    boolean;
+  doc_ok:       boolean;
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
-// BLOCK CONTENT SHAPES — what goes inside Block.content for each block_type
+// BLOCK CONTENT SHAPE — what goes inside Block.content per block_type
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** content for block_type: 'text', 'heading1', 'heading2', 'heading3', 'quote' */
+/**
+ * Union of all possible content fields across every block type.
+ * All fields are optional — only the fields relevant to a specific block_type
+ * will be present at runtime.
+ *
+ * Content schemas per type (matches backend comments in BLOCK_TYPE_REGISTRY):
+ *   paragraph / heading* / quote:  { text, marks }
+ *   callout:                        { text, emoji, color }
+ *   bullet_item / numbered_item:    { text, marks }
+ *   todo_item:                      { text, checked, marks }
+ *   code:                           { code, language, output }
+ *   image:                          { url, alt, width }
+ *   file / pdf:                     { url, filename, size }
+ *   video:                          { url }
+ *   column_container:               { columns }
+ *   sticky:                         { text, color }
+ *   rich:                           { json }   ← full TipTap JSON
+ *   automation_trigger:             { trigger_type, config }
+ *   automation_action:              { action_type, config }
+ *   ai_agent_block:                 { agent_type, system_prompt, output }
+ *   database / spreadsheet:         { schema, rows }
+ *   form:                           { fields, submit_label }
+ *   chart:                          { chart_type, data_source }
+ */
+export interface BlockContent {
+  // ── Text / list ─────────────────────────────────────────────────────────
+  text?:          string;
+  marks?:         Array<{ type: string; attrs?: Record<string, unknown> }>;
+  level?:         number;       // heading level (1–3)
+  // ── Callout ─────────────────────────────────────────────────────────────
+  emoji?:         string;
+  color?:         string;
+  // ── To-do ───────────────────────────────────────────────────────────────
+  checked?:       boolean;
+  // ── Code ────────────────────────────────────────────────────────────────
+  code?:          string;
+  language?:      string;
+  output?:        string | null;
+  // ── Media ───────────────────────────────────────────────────────────────
+  url?:           string;
+  alt?:           string;
+  width?:         number;
+  filename?:      string;
+  size?:          number;
+  caption?:       string;
+  // ── Layout ──────────────────────────────────────────────────────────────
+  columns?:       number;
+  // ── Rich (canvas TipTap block) ───────────────────────────────────────────
+  json?:          Record<string, unknown>;
+  // ── Automation ──────────────────────────────────────────────────────────
+  trigger_type?:  string;
+  action_type?:   string;
+  agent_type?:    string;
+  system_prompt?: string;
+  config?:        Record<string, unknown>;
+  // ── Data ────────────────────────────────────────────────────────────────
+  schema?:        unknown[];
+  rows?:          unknown[][];
+  fields?:        unknown[];
+  submit_label?:  string;
+  chart_type?:    string;
+  data_source?:   unknown | null;
+  // ── Catch-all for future / unknown fields ───────────────────────────────
+  [key: string]:  unknown;
+}
+
+// ── Specific content shape interfaces — kept for backwards compatibility ─────
+// These are more strictly typed than BlockContent. Use them when you know the
+// block_type and want precise field access:
+//   const c = block.content as TextContent;
+
+/** content for paragraph, heading1–3, quote */
 export interface TextContent {
-  text: string;           // the raw text, may include inline markdown
+  text:   string;
+  marks?: Array<{ type: string; attrs?: Record<string, unknown> }>;
 }
 
-/** content for block_type: 'code' */
+/** content for code blocks */
 export interface CodeContent {
-  code: string;           // the source code
-  language: string;       // e.g. 'python', 'typescript', 'bash'
+  code:     string;
+  language: string;
+  output?:  string | null;
 }
 
-/** content for block_type: 'todo' */
+/** content for todo_item */
 export interface TodoContent {
-  text: string;
+  text:    string;
   checked: boolean;
 }
 
-/** content for block_type: 'toggle' */
-export interface ToggleContent {
-  text: string;           // the toggle header
-  open: boolean;          // whether the children are visible
-}
-
-/** content for block_type: 'callout' */
+/** content for callout */
 export interface CalloutContent {
-  text: string;
-  icon: string;           // emoji or icon name, e.g. '💡'
-  color: string;          // tailwind color class, e.g. 'yellow'
+  text:  string;
+  emoji: string;   // e.g. '💡'
+  color: string;   // tailwind color name or hex
 }
 
-/** content for block_type: 'image' | 'video' | 'audio' | 'file' */
+/** content for image, video, file, pdf */
 export interface MediaContent {
-  url: string;            // absolute URL to the stored file
+  url:      string;
   caption?: string;
-  width?: number;         // optional display width in px
+  width?:   number;
+  filename?: string;
+  size?:    number;
 }
 
-/** content for block_type: 'bookmark' | 'embed' */
-export interface EmbedContent {
-  url: string;
-  title?: string;
-  description?: string;
-  thumbnail?: string;
-}
-
-/** content for block_type: 'page_link' */
-export interface PageLinkContent {
-  page_id: string;        // UUID of the linked page
-  title?: string;         // cached title to show if page is deleted
+/** content for rich (canvas TipTap block) */
+export interface RichContent {
+  json: Record<string, unknown>;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -157,139 +262,125 @@ export interface PageLinkContent {
 
 /**
  * User — mirrors accounts.User model
- * The logged-in person. UUID id (not integer) because Django uses UUID pk.
  */
 export interface User {
-  id: string;             // UUID
-  email: string;
-  // full_name is stored in the DB but UserSerializer only returns display_name.
-  // Made optional so the type works with both the API response and the Zustand store.
-  full_name?: string;
+  id:           string;   // UUID
+  email:        string;
+  full_name?:   string;   // optional — only present on some endpoints
   display_name: string;
-  avatar: string | null;  // URL to avatar image, or null
+  avatar:       string | null;
 }
 
 /**
  * Workspace — mirrors workspaces.Workspace model
- * A workspace is a top-level container, like a company or personal vault.
- * One user can have multiple workspaces.
  *
- * FIELD AVAILABILITY NOTE:
- *   GET /api/workspaces/      (list)   → returns: id, name, icon, color, page_count, is_locked, updated_at
- *   GET /api/workspaces/{id}/ (detail) → returns all fields below
- *   Fields marked ? are only present on the detail endpoint.
- *
- * To add workspace settings later: extend this interface and add
- * the field to the PATCH /api/workspaces/:id/ endpoint.
+ * FIELD AVAILABILITY:
+ *   List endpoint   → id, name, icon, color, page_count, is_locked, updated_at
+ *   Detail endpoint → all fields below
  */
 export interface Workspace {
-  id: string;
-  name: string;
-  icon: string;               // emoji, e.g. '🧠'
-  color: string;              // backend string name: 'white'|'red'|'green'|'yellow'|'blue'|'purple'
-  updated_at: string;
-  // Detail-only fields (not returned by the list endpoint)
-  description?: string;
-  is_personal?: boolean;      // true = the user's private default workspace
-  enc_tier?: EncTier;
-  ai_consent?: AiConsent;
+  id:              string;
+  name:            string;
+  icon:            string;    // emoji, e.g. '🧠'
+  color:           string;    // backend string name: 'white'|'red'|'green'|'yellow'|'blue'|'purple'
+  updated_at:      string;
+  description?:    string;
+  is_personal?:    boolean;
+  enc_tier?:       EncTier;
+  ai_consent?:     AiConsent;
   storage_used_mb?: number;
-  created_at?: string;        // ISO 8601 date string
-  // Computed fields returned by both list and detail
-  page_count?: number;
-  is_locked?: boolean;
-  owner_name?: string;        // display_name of the owner (detail only)
+  created_at?:     string;
+  page_count?:     number;
+  is_locked?:      boolean;
+  owner_name?:     string;
 }
 
 /**
  * Page — mirrors pages.Page model
- * A page lives inside a workspace and contains blocks.
- * Pages can be nested (parent → children) for sidebar hierarchy.
  *
- * FIELD AVAILABILITY NOTE:
- *   GET /api/pages/?workspace=<id>  (list)   → returns: id, title, icon, page_type, parent, is_pinned, is_locked, updated_at
- *   GET /api/pages/{id}/            (detail) → returns all fields below
- *   POST/PATCH /api/pages/          (write)  → returns all fields below
- *   Fields marked ? may be absent when reading from the list endpoint.
- *
- * NOTE: is_deleted is never returned by the API (backend filters deleted pages out).
+ * FIELD AVAILABILITY:
+ *   List endpoint   → id, title, icon, page_type, parent, is_pinned, is_locked, updated_at
+ *   Detail endpoint → all fields below
  */
 export interface Page {
-  id: string;
-  title: string;
-  icon: string;
-  page_type: PageType;
-  parent: string | null;  // parent page UUID, or null if top-level
-  is_pinned: boolean;
-  is_locked: boolean;
-  updated_at: string;
-  custom_page_type?: string | null;  // CustomPageType UUID
-  color?: string;          // per-page hex accent; '' means "use type default"
-  color_style?: 'none' | 'accent' | 'tint' | 'both';  // where color appears in the page; default 'both'
-  // Detail-only / write-response fields:
-  workspace?: string;      // workspace UUID
-  created_by?: string;     // user UUID
-  view_mode?: ViewMode;
-  header_pic?: string | null;     // relative path to uploaded file (e.g. "page_headers/abc.jpg")
-  header_pic_url?: string;        // external or gallery URL; takes priority over header_pic
-  enc_tier?: EncTier;
-  ai_consent?: AiConsent;
-  created_at?: string;
+  id:                string;
+  title:             string;
+  icon:              string;
+  page_type:         PageType;
+  parent:            string | null;
+  is_pinned:         boolean;
+  is_locked:         boolean;
+  updated_at:        string;
+  custom_page_type?: string | null;
+  color?:            string;
+  color_style?:      'none' | 'accent' | 'tint' | 'both';
+  workspace?:        string;
+  created_by?:       string;
+  view_mode?:        ViewMode;
+  header_pic?:       string | null;
+  header_pic_url?:   string;
+  enc_tier?:         EncTier;
+  ai_consent?:       AiConsent;
+  created_at?:       string;
 }
 
 /**
  * Block — mirrors blocks.Block model
- * A block is a single content unit on a page.
  *
- * content is typed as Record<string, unknown> because each block_type
- * has a different structure (see the content shape interfaces above).
- * In practice, cast it when you know the type:
- *   const text = block.content as TextContent;
+ * block_type is validated against backend BLOCK_TYPE_REGISTRY — no
+ * Django choices= means adding new types never requires a migration.
  *
- * Canvas fields (canvas_x/y/w/h/z) are only used in 'canvas' view_mode.
+ * category and has_children are computed properties derived from the
+ * registry at read time — they are read-only on the serializer.
+ *
+ * Canvas fields (canvas_x/y/w/h/z) are only meaningful in canvas view_mode.
+ * canvas_z defaults to 0 (never null) — use z-index for stacking order.
  */
 export interface Block {
-  id: string;
-  page: string;           // page UUID
-  parent: string | null;  // parent block UUID (for nested blocks like toggles)
-  block_type: BlockType;
-  content: Record<string, unknown>;  // shape depends on block_type
-  order: number;          // fractional ordering (1.0, 2.0, 1.5 for insertion)
-  canvas_x: number | null;
-  canvas_y: number | null;
-  canvas_w: number | null;
-  canvas_h: number | null;
-  canvas_z: number | null;
-  doc_visible: boolean;
+  id:             string;
+  page:           string;           // page UUID
+  parent:         string | null;    // parent block UUID (nested blocks)
+  block_type:     BlockType;
+  category:       BlockCategory;    // derived from BLOCK_TYPE_REGISTRY (read-only)
+  has_children:   boolean;          // derived from BLOCK_TYPE_REGISTRY (read-only)
+  content:        BlockContent;
+  order:          number;           // fractional: 1.0, 2.0, 1.5 for insertion
+  canvas_x:       number | null;
+  canvas_y:       number | null;
+  canvas_w:       number | null;
+  canvas_h:       number | null;
+  canvas_z:       number;           // integer, default 0 — never null
+  doc_visible:    boolean;
   canvas_visible: boolean;
-  bg_color: string;
-  enc_tier: EncTier;
-  ai_consent: AiConsent;
-  is_locked: boolean;
-  created_at: string;
-  updated_at: string;
+  bg_color:       string;
+  enc_tier:       EncTier;
+  ai_consent:     AiConsent;
+  is_locked:      boolean;
+  is_deleted:     boolean;
+  children_count: number;           // count of non-deleted direct children
+  created_at:     string;
+  updated_at:     string;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// API RESPONSE SHAPES — what the backend actually sends back
+// API RESPONSE SHAPES
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
  * Standard DRF paginated list response.
- * Django REST Framework wraps list results in { count, next, previous, results }.
  * Used generically: PaginatedResponse<Workspace>, PaginatedResponse<Page>, etc.
  */
 export interface PaginatedResponse<T> {
-  count: number;
-  next: string | null;    // URL to next page of results
+  count:    number;
+  next:     string | null;
   previous: string | null;
-  results: T[];
+  results:  T[];
 }
 
 /** Response from POST /api/auth/login/ and POST /api/auth/register/ */
 export interface AuthTokens {
-  access: string;         // JWT access token (short-lived, 15 min)
-  refresh: string;        // JWT refresh token (long-lived, 30 days)
+  access:  string;   // short-lived JWT (15 min)
+  refresh: string;   // long-lived JWT (30 days)
 }
 
 /** Response from POST /api/auth/token/refresh/ */
@@ -302,85 +393,84 @@ export interface RefreshResponse {
 // ─────────────────────────────────────────────────────────────────────────────
 
 export interface LoginPayload {
-  email: string;
+  email:    string;
   password: string;
 }
 
 export interface RegisterPayload {
-  email: string;
-  password: string;
-  password2: string;  // required by Django's RegisterSerializer for confirmation
+  email:     string;
+  password:  string;
+  password2: string;   // required by Django's RegisterSerializer for confirmation
   full_name: string;
 }
 
 export interface CreateWorkspacePayload {
-  name: string;
-  icon?: string;
-  color?: string;
+  name:         string;
+  icon?:        string;
+  color?:       string;
   description?: string;
 }
 
 export interface UpdateWorkspacePayload {
-  name?: string;
-  icon?: string;
-  color?: string;
+  name?:        string;
+  icon?:        string;
+  color?:       string;
   description?: string;
 }
 
 export interface CreatePagePayload {
-  title: string;
-  parent?: string | null;
-  page_type?: PageType;
-  view_mode?: ViewMode;
-  icon?: string;
+  title:             string;
+  parent?:           string | null;
+  page_type?:        PageType;
+  view_mode?:        ViewMode;
+  icon?:             string;
   custom_page_type?: string | null;
 }
 
-// BUG FIX: removed enc_tier and ai_consent (not in PageUpdateSerializer).
-// Added page_type and view_mode (which PageUpdateSerializer does accept).
 export interface UpdatePagePayload {
-  title?: string;
-  icon?: string;
-  color?: string;           // hex accent; send '' to reset to type default
-  color_style?: 'none' | 'accent' | 'tint' | 'both';
-  header_pic?: string | null;
-  header_pic_url?: string;        // send '' to clear; send URL string to set gallery/external cover
-  is_pinned?: boolean;
-  parent?: string | null;
-  page_type?: PageType;
-  view_mode?: ViewMode;
+  title?:            string;
+  icon?:             string;
+  color?:            string;
+  color_style?:      'none' | 'accent' | 'tint' | 'both';
+  header_pic?:       string | null;
+  header_pic_url?:   string;
+  is_pinned?:        boolean;
+  parent?:           string | null;
+  page_type?:        PageType;
+  view_mode?:        ViewMode;
   custom_page_type?: string | null;
 }
 
 export interface CreateBlockPayload {
-  block_type: BlockType;
-  content: Record<string, unknown>;
-  order?: number;
-  parent?: string | null;
-  // Canvas fields — only needed when creating a block directly on the canvas
-  canvas_x?: number | null;
-  canvas_y?: number | null;
-  canvas_w?: number | null;
-  canvas_h?: number | null;
-  canvas_z?: number | null;
-  doc_visible?: boolean;
+  block_type:      BlockType;
+  content:         BlockContent;
+  order?:          number;
+  parent?:         string | null;
+  canvas_x?:       number | null;
+  canvas_y?:       number | null;
+  canvas_w?:       number | null;
+  canvas_h?:       number | null;
+  canvas_z?:       number;
+  doc_visible?:    boolean;
   canvas_visible?: boolean;
 }
 
-// BUG FIX: removed block_type (BlockUpdateSerializer does not accept it).
 export interface UpdateBlockPayload {
-  content?: Record<string, unknown>;
-  order?: number;
-  parent?: string | null;
-  // Canvas position/size — updated on drag-end and resize-end
-  canvas_x?: number | null;
-  canvas_y?: number | null;
-  canvas_w?: number | null;
-  canvas_h?: number | null;
-  canvas_z?: number | null;
-  doc_visible?: boolean;
+  block_type?:     BlockType;       // now accepted by BlockUpdateSerializer
+  content?:        BlockContent;
+  order?:          number;
+  parent?:         string | null;
+  canvas_x?:       number | null;
+  canvas_y?:       number | null;
+  canvas_w?:       number | null;
+  canvas_h?:       number | null;
+  canvas_z?:       number;
+  doc_visible?:    boolean;
   canvas_visible?: boolean;
-  bg_color?: string;
+  bg_color?:       string;
+  is_locked?:      boolean;
+  enc_tier?:       EncTier;
+  ai_consent?:     AiConsent;
 }
 
 export interface ReorderBlocksPayload {
@@ -388,39 +478,37 @@ export interface ReorderBlocksPayload {
 }
 
 export interface AiActionPayload {
-  action_type: string;    // e.g. 'summarize', 'expand', 'translate'
-  content?:    string;    // text to process (provide this OR page_id)
-  page_id?:    string;    // page UUID — backend fetches the text if content not given
-  extra?:      Record<string, unknown>;  // e.g. { language: 'Spanish' } for translate
+  action_type: string;
+  content?:    string;
+  page_id?:    string;
+  extra?:      Record<string, unknown>;
 }
 
 /** A single message in the AI chat history */
 export interface AiChatMessage {
-  /** Present on messages loaded from the backend; absent on locally-created messages */
-  id?:         string;
+  id?:         string;   // present on messages loaded from the backend
   role:        'user' | 'assistant' | 'system';
   content:     string;
-  /** ISO 8601 — present on messages loaded from the backend */
-  created_at?: string;
+  created_at?: string;   // ISO 8601 — present on backend messages
 }
 
 /** POST /api/ai/chat/ */
 export interface AiChatPayload {
   messages: AiChatMessage[];
-  page_id?:  string;   // page to use as context (optional)
-  context?:  string;   // extra context text (optional)
+  page_id?: string;
+  context?: string;
 }
 
-/** Response from GET /api/ai/quota/ — per-user daily limits + today's usage */
+/** Response from GET /api/ai/quota/ */
 export interface AiQuota {
-  tier:                string;   // 'free' | 'pro' | 'unlimited'
-  daily_actions_limit: number | null;  // null = unlimited
+  tier:                string;
+  daily_actions_limit: number | null;
   daily_actions_used:  number;
-  daily_tokens_limit:  number | null;  // null = unlimited
+  daily_tokens_limit:  number | null;
   daily_tokens_used:   number;
 }
 
-/** Response item from GET /api/ai/actions/ — metadata for one available action */
+/** Response item from GET /api/ai/actions/ */
 export interface AiActionDefinition {
   action_type:    string;
   label:          string;
@@ -429,7 +517,7 @@ export interface AiActionDefinition {
   requires_extra: string[];
 }
 
-/** Response from GET /api/ai/usage/ — token usage summary for the current user */
+/** Response from GET /api/ai/usage/ */
 export interface AiUsageSummary {
   total_input_tokens:  number;
   total_output_tokens: number;
@@ -446,218 +534,149 @@ export interface AiUsageSummary {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// RELATIONS — page links and backlinks (Phase 2 Feature 1)
+// RELATIONS — page links, canvas arrows, backlinks, knowledge graph
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * Connection — mirrors relations.Connection model (PAGE_LINK type only for now).
+ * Connection — mirrors relations.Connection model (PAGE_LINK type).
  * Created when a user inserts a [[page link]] in the editor.
- * The backend upserts on (conn_type, source_page, target_page) — no duplicates.
- *
- * Returned by: POST /api/relations/
  */
 export interface Connection {
-  id: string;                        // UUID
-  conn_type: 'page_link';            // only PAGE_LINK connections are created from the editor
-  source_page: string;               // UUID of the page that contains the [[link]]
-  target_page: string;               // UUID of the page being linked to
-  metadata: Record<string, unknown>; // e.g. { anchor_text: 'My Notes' } — unused in Phase 1
-  created_at: string;                // ISO 8601
+  id:         string;
+  conn_type:  'page_link';
+  source_page: string;
+  target_page: string;
+  metadata:   Record<string, unknown>;
+  created_at: string;
 }
 
 /**
  * BlockConnection — a canvas arrow between two blocks.
  * Stored as a Connection row with conn_type='block_link'.
- *
- * Returned by: GET /api/relations/block-connections/?page={id}
  */
 export interface BlockConnection {
-  id:           string;           // UUID
+  id:           string;
   conn_type:    'block_link';
-  source_block: string;           // block UUID
-  target_block: string;           // block UUID
-  arrow_type:   'link' | 'flow';  // 'flow' renders animated dashed blue arrow
-  direction:    'directed' | 'undirected'; // 'directed' shows arrowhead
-  label:        string;           // optional display label on the arrow
+  source_block: string;
+  target_block: string;
+  arrow_type:   'link' | 'flow';
+  direction:    'directed' | 'undirected';
+  label:        string;
   is_deleted:   boolean;
-  created_at:   string;           // ISO 8601
+  created_at:   string;
 }
 
 /**
  * BacklinkPage — one item in the backlinks panel.
- * A flat summary of a Connection, shaped for display (no extra joins needed).
- *
- * Returned by: GET /api/relations/pages/{id}/backlinks/
+ * Returned by GET /api/relations/pages/{id}/backlinks/
  */
 export interface BacklinkPage {
-  id: string;                        // connection UUID (stable key for React lists)
-  source_page_id: string;            // UUID of the page that links here
-  source_page_title: string;         // title to display in the backlinks panel
-  source_page_workspace_id: string;  // workspace UUID — used to build the nav URL
+  id:                       string;   // connection UUID
+  source_page_id:           string;
+  source_page_title:        string;
+  source_page_workspace_id: string;
 }
 
 /**
  * GraphNode — one node in the workspace knowledge graph.
- * Represents a single non-deleted page in the workspace.
- *
- * color is the resolved effective color (never null/empty):
- *   page.color || type.default_color || '#7c3aed'
- * Resolved server-side in WorkspaceGraphView so the frontend never has to
- * apply the fallback chain itself.
- *
- * Returned by: GET /api/relations/workspace/{id}/graph/  (inside "nodes")
+ * Returned by GET /api/relations/workspace/{id}/graph/ (inside "nodes")
  */
 export interface GraphNode {
-  id:               string;          // page UUID
+  id:               string;
   title:            string;
-  icon:             string;          // resolved effective emoji
-  color:            string;          // resolved effective hex color (never empty)
-  custom_page_type: string | null;   // CustomPageType UUID, or null
+  icon:             string;
+  color:            string;           // resolved effective hex — never empty
+  custom_page_type: string | null;
 }
 
 /**
  * GraphEdge — one directed edge in the workspace knowledge graph.
- * Represents a PAGE_LINK Connection between two pages.
- *
- * type values:
- *   'page_link' — a manual [[link]] inserted by the user
- *   'parent'    — auto-created when a child page is created (parent → child)
- *   'child'     — auto-created when a child page is created (child → parent)
- *
- * Returned by: GET /api/relations/workspace/{id}/graph/  (inside "edges")
+ * Returned by GET /api/relations/workspace/{id}/graph/ (inside "edges")
  */
 export interface GraphEdge {
-  source: string;   // source page UUID
-  target: string;   // target page UUID
+  source: string;
+  target: string;
   type:   string;   // 'page_link' | 'parent' | 'child'
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// PROPERTIES — typed metadata fields on pages (Phase 2 Feature 2)
+// PROPERTIES — typed metadata fields on pages
 // ─────────────────────────────────────────────────────────────────────────────
 
-/**
- * PropType — mirrors PropertyDefinition.PropertyType choices.
- * Each type controls how a value is displayed and edited in the UI.
- */
 export type PropType =
   | 'text' | 'number' | 'date' | 'checkbox' | 'select' | 'multi'
   | 'url' | 'email' | 'phone' | 'currency' | 'relation' | 'file' | 'object';
 
-/** One option entry for select / multi-select property types */
 export interface SelectOption {
   label:  string;
-  color?: string;  // optional tailwind color name, e.g. 'violet'
+  color?: string;
 }
 
-/**
- * PropertyDefinition — mirrors properties.PropertyDefinition model.
- * Describes the schema of a typed field (name, type, options).
- * Belongs to a workspace; optionally scoped to a custom_page_type.
- *
- * Returned by: GET /api/properties/definitions/?workspace=<id>
- */
 export interface PropertyDefinition {
-  id:               string;         // UUID — DRF serializes as string
-  workspace:        string;         // workspace UUID
-  custom_page_type: string | null;  // UUID or null if not scoped to a custom type
-  page_type:        string;         // built-in page type filter (blank = any)
+  id:               string;
+  workspace:        string;
+  custom_page_type: string | null;
+  page_type:        string;
   name:             string;
   prop_type:        PropType;
-  options:          SelectOption[]; // only used for select / multi types
+  options:          SelectOption[];
   order:            number;
   is_global:        boolean;
 }
 
-/**
- * PropertyValue — mirrors properties.PropertyValue model.
- * The actual value of a property on a specific page.
- * One row per (page, definition) pair.
- *
- * value_text is a TextField with blank=True (defaults to "" not null).
- * All other value_* columns are nullable.
- *
- * Returned by: GET /api/properties/values/?page=<id>
- */
 export interface PropertyValue {
-  id:           string;        // UUID — DRF serializes as string
-  page:         string;        // page UUID
-  definition:   string;        // PropertyDefinition UUID
-  value_text:   string;        // blank string when unset (not null — TextField)
+  id:           string;
+  page:         string;
+  definition:   string;
+  value_text:   string;
   value_number: number | null;
-  value_date:   string | null; // ISO 8601 datetime string
+  value_date:   string | null;
   value_bool:   boolean | null;
-  value_json:   unknown | null; // select options (string[]), relations, etc.
+  value_json:   unknown | null;
 }
 
-/**
- * PageTypeGroup — mirrors properties.PageTypeGroup model.
- * A named, coloured bucket that organises CustomPageTypes in the sidebar
- * and in the CustomPageTypeManager panel.
- *
- * Returned by: GET /api/properties/groups/?workspace=<id>
- */
 export interface PageTypeGroup {
-  id:         string;   // UUID
-  workspace:  string;   // workspace UUID
+  id:         string;
+  workspace:  string;
   name:       string;
-  color:      string;   // hex color string, e.g. '#60a5fa'
+  color:      string;
   order:      number;
-  created_at: string;   // ISO 8601
+  created_at: string;
 }
 
-/**
- * CustomPageType — mirrors properties.CustomPageType model.
- * A user-defined page category with its own scoped PropertyDefinitions.
- *
- * group      — FK UUID for write operations (send the group id to assign/unassign)
- * group_detail — full nested PageTypeGroup object returned on read (null if ungrouped)
- * is_pinned  — controls sidebar picker visibility (true = show in picker)
- *
- * Returned by: GET /api/properties/custom-types/?workspace=<id>
- */
 export interface CustomPageType {
   id:            string;
   workspace:     string;
   name:          string;
   icon:          string;
   description:   string;
-  group:         string | null;            // PageTypeGroup UUID (write FK)
-  group_detail:  PageTypeGroup | null;     // nested group object (read only)
+  group:         string | null;
+  group_detail:  PageTypeGroup | null;
   is_pinned:     boolean;
-  default_color: string;                   // hex accent for graph nodes + page header
-  default_icon:  string;                   // emoji shown in graph node + sidebar
+  default_color: string;
+  default_icon:  string;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// GALLERY — curated cover images served from media/gallery/
+// GALLERY — curated cover images
 // ─────────────────────────────────────────────────────────────────────────────
 
-/**
- * GalleryImage — one item from GET /api/pages/gallery/
- * Represents a curated cover image available for all pages.
- * credit is empty string by default; admins can add metadata later.
- */
 export interface GalleryImage {
   id:     string;   // filename, e.g. "gallery_01.jpg"
   url:    string;   // absolute URL served from media/gallery/
-  credit: string;   // photographer credit (empty string if not set)
+  credit: string;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // HOVER CARD — lightweight page preview for [[Page Link]] chips
 // ─────────────────────────────────────────────────────────────────────────────
 
-/**
- * PagePreview — lightweight data returned by GET /api/pages/:id/preview/
- * Used by the hover card shown when hovering [[Page Link]] chips in the editor.
- */
 export interface PagePreview {
   id:              string;
   title:           string;
   icon:            string;
   page_type:       PageType;
-  content_preview: string;  // first 100 chars of plain text, never JSON
+  content_preview: string;
   backlink_count:  number;
   workspace_id:    string;
 }
@@ -666,14 +685,9 @@ export interface PagePreview {
 // ERROR SHAPE — how the backend reports validation errors
 // ─────────────────────────────────────────────────────────────────────────────
 
-/**
- * ApiError — shape of error responses from Django REST Framework.
- * DRF returns validation errors as { field: ['message'] } or { detail: 'message' }.
- * The api.ts interceptor will parse this into a usable format.
- */
 export interface ApiError {
-  message: string;                         // human-readable summary
-  detail?: string;                         // DRF's generic error field
-  fields?: Record<string, string[]>;       // field-level validation errors
+  message:    string;
+  detail?:    string;
+  fields?:    Record<string, string[]>;
   statusCode: number;
 }

@@ -2,16 +2,23 @@
  * app/(app)/[workspaceId]/[pageId]/page.tsx — Page Editor
  *
  * What:    The full-screen editor for a single page.
- *          Loads page metadata + blocks, renders the TipTap editor
+ *          Loads page metadata + blocks, renders DocumentEditor
  *          (document mode) or the infinite canvas (canvas mode),
  *          autosaves content changes, and hosts the AI panel.
  *
  * URL:     /:workspaceId/:pageId
  *
- * Autosave: editor JSON → single "text" block → PATCH or POST on save.
+ * Document mode (Phase 2+):
+ *   Uses DocumentEditor with per-block create/update/delete.
+ *   Each block is an independent row with its own mini TipTap editor.
+ *   Blocks are stored with doc_visible=true and sorted by fractional order.
+ *
+ * Canvas mode:
+ *   Unchanged. CanvasView receives canvas_visible blocks + the first
+ *   doc block for the document card preview.
  *
  * View modes:
- *   document — current vertical scroll TipTap editor (default)
+ *   document — DocumentEditor (vertical scroll, per-block)
  *   canvas   — infinite 2D space; blocks positioned with canvas_x/y
  *   Toggle via the Canvas / Document button in the top bar.
  *   PATCH /api/pages/:id/ with { view_mode } persists the choice.
@@ -20,6 +27,7 @@
  *   → Panel source:   src/components/ai/AiPanel.tsx
  *   → Backend:        Apps/ai_agent/views.py
  *   → Panel state:    useAppStore → aiPanelOpen / toggleAiPanel
+ *   → pageContent:    concatenation of all doc block texts
  *
  * Page options "..." menu (top-right):
  *   → Rename    — focuses the title input
@@ -54,16 +62,19 @@ import { useBlocks, useCreateBlock, useUpdateBlock }  from '@/hooks/useBlocks';
 import { useUpdatePage, useDeletePage, pageKeys }     from '@/hooks/usePages';
 import { useCustomPageTypes }                         from '@/hooks/useCustomPageTypes';
 import { useAppStore }                                from '@/lib/store';
-import { Editor }                                     from '@/components/editor/Editor';
-import { EditorErrorBoundary }                        from '@/components/editor/EditorErrorBoundary';
+import { DocumentEditor }                             from '@/components/blocks/DocumentEditor';
 import { AiPanel }                                    from '@/components/ai/AiPanel';
 import { DropdownMenu }                               from '@/components/ui/DropdownMenu';
 import { PropertyBar }                                from '@/components/properties/PropertyBar';
 import { CanvasView }                                 from '@/components/canvas/CanvasView';
 import { PageCover }                                  from '@/components/editor/PageCover';
 import { BottomTabBar }                               from '@/components/editor/BottomTabBar';
-import type { BacklinkPage }                          from '@/types';
-import type { Editor as TipTapEditor }               from '@tiptap/core';
+import {
+  useCreateDocBlock,
+  useUpdateDocBlock,
+  useDeleteDocBlock,
+}                                                     from '@/hooks/useDocumentBlocks';
+import type { BacklinkPage, Block, BlockType, UpdateBlockPayload } from '@/types';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Constants — icon picker + color picker
@@ -106,10 +117,6 @@ const COLOR_SWATCHES = [
 ];
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Helpers
-// ─────────────────────────────────────────────────────────────────────────────
-
-// ─────────────────────────────────────────────────────────────────────────────
 // Page component
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -130,12 +137,23 @@ export default function PageEditorRoute() {
     staleTime: 1000 * 60,
   });
 
-  // ── Load blocks ─────────────────────────────────────────────────────────
+  // ── Load blocks (shared between doc + canvas) ───────────────────────────
   const { data: blocks = [], isLoading: blocksLoading } = useBlocks(pageId);
-  const createBlock = useCreateBlock(pageId);
+  useCreateBlock(pageId); // kept to maintain hook call order; canvas create is via updateBlock
   const updateBlock = useUpdateBlock(pageId);
   const updatePage  = useUpdatePage(workspaceId);
   const deletePage  = useDeletePage(workspaceId);
+
+  // ── Document block mutations (Phase 2 DocumentEditor) ───────────────────
+  // pendingFocusBlockId: set via onCreated callback with the real new block ID.
+  // Passed to DocumentEditor so it can focus the correct block after creation
+  // (avoids the positional pendingFocusAfterId bug that focused the wrong block).
+  const [pendingFocusBlockId, setPendingFocusBlockId] = useState<string | null>(null);
+  const createDocBlock = useCreateDocBlock(pageId, (newBlock) => {
+    setPendingFocusBlockId(newBlock.id);
+  });
+  const updateDocBlock = useUpdateDocBlock(pageId);
+  const deleteDocBlock = useDeleteDocBlock(pageId);
 
   // ── Custom page types (for type picker + badge) ──────────────────────────
   const { data: customTypes = [] } = useCustomPageTypes(workspaceId);
@@ -184,7 +202,6 @@ export default function PageEditorRoute() {
   }
 
   // ── Page options "..." menu state ───────────────────────────────────────
-  // When true, the dropdown shows a delete confirmation instead of normal items.
   const [confirmingDelete, setConfirmingDelete] = useState(false);
 
   // ── Type picker portal ───────────────────────────────────────────────────
@@ -201,7 +218,6 @@ export default function PageEditorRoute() {
       const r = anchor.getBoundingClientRect();
       setTypePickerPos({ top: r.bottom + 4, left: r.left });
     } else {
-      // No badge visible (page has no type) — position near top of content area
       setTypePickerPos({ top: 120, left: 320 });
     }
     setTypePickerOpen(true);
@@ -287,23 +303,17 @@ export default function PageEditorRoute() {
     };
   }, [colorPickerOpen]);
 
-  // ── Track editor plain text (for AI context — document mode only) ────────
-  const [editorText, setEditorText] = useState('');
-
-  // ── AI panel enhancements ────────────────────────────────────────────────
-  // editorRef: exposes the TipTap editor instance so AiPanel can insert results
-  const editorRef = useRef<TipTapEditor | null>(null);
-  // selectedText: whatever the user has highlighted in the editor
-  const [selectedText,    setSelectedText]    = useState('');
-  // pendingAiAction: set by the code block toolbar to trigger an action in AiPanel
-  const [pendingAiAction, setPendingAiAction] = useState<{ actionType: string; content: string } | null>(null);
+  // ── AI panel state ───────────────────────────────────────────────────────
+  // selectedText: whatever the user has highlighted in any block editor
+  // (populated via browser selection API in Phase 4; empty string for now)
+  const [selectedText] = useState(''); // Phase 4: populated via browser selection API
 
   // ── Backlinks (for bottom tab bar) ──────────────────────────────────────
   const { data: backlinks = [] } = useQuery<BacklinkPage[]>({
     queryKey:  ['backlinks', pageId],
     queryFn:   () => pageApi.backlinks(pageId),
     enabled:   !!pageId,
-    staleTime: 1000 * 5, // connections sync on every save — keep data fresh
+    staleTime: 1000 * 5,
   });
 
   // ── Local cover URL override + cover expanded state ──────────────────────
@@ -337,48 +347,39 @@ export default function PageEditorRoute() {
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [canvasFullscreen]);
 
-  // ── Find the main content block (document mode autosave) ────────────────
-  // canvas_x === null guards against canvas text blocks contaminating the document editor
-  const contentBlock = blocks.find((b) => b.block_type === 'text' && b.canvas_x === null);
+  // ── Document block callbacks — must be before any early return ───────────
 
-  // ── Canvas blocks — only blocks explicitly pinned to the canvas ───────────
-  const canvasBlocks = blocks.filter((b) => b.canvas_visible);
-
-  // ── Shared blocks — visible in both document and canvas ──────────────────
-  // Used to populate the "Shared" tab in CanvasView's left panel.
-  const sharedBlocks = blocks.filter(
-    (b) => b.canvas_visible && b.doc_visible && b.canvas_x !== null,
-  );
-
-  //── Autosave callback (document mode) ───────────────────────────────────
-  const handleSave = useCallback(
-    async (json: Record<string, unknown>) => {
-      try {
-        if (contentBlock) {
-          await updateBlock.mutateAsync({
-            id:      contentBlock.id,
-            payload: { content: { json } },
-          });
-        } else {
-          await createBlock.mutateAsync({
-            block_type: 'text',
-            content:    { json },
-            order:      1,
-          });
-        }
-        // Backend sync_page_links ran — refresh backlinks panel + knowledge graph
+  /**
+   * Update a block's content (or any other field).
+   * DocumentEditor wraps raw content objects in { content: ... } before
+   * calling this — so `payload` is a full UpdateBlockPayload.
+   */
+  const handleUpdateBlock = useCallback(
+    (blockId: string, payload: UpdateBlockPayload) => {
+      updateDocBlock.mutate({ id: blockId, payload });
+      if (payload.content) {
         queryClient.invalidateQueries({ queryKey: ['backlinks', pageId] });
         queryClient.invalidateQueries({ queryKey: ['workspace-graph', workspaceId] });
-      } catch {
-        toast.error('Auto-save failed. Your changes may not be saved.');
       }
     },
-    [contentBlock, updateBlock, createBlock, queryClient, pageId, workspaceId],
+    [updateDocBlock, queryClient, pageId, workspaceId],
   );
 
-  // ── Extract initial TipTap JSON (document mode) ─────────────────────────
-  const initialContent =
-    contentBlock?.content?.json as Record<string, unknown> | null ?? null;
+  /** Soft-delete a block via the document editor (backspace on empty). */
+  const handleDeleteBlock = useCallback(
+    (blockId: string) => {
+      deleteDocBlock.mutate(blockId);
+    },
+    [deleteDocBlock],
+  );
+
+  /** Reorder a block by patching its fractional order field. */
+  const handleReorderBlock = useCallback(
+    (blockId: string, newOrder: number) => {
+      updateDocBlock.mutate({ id: blockId, payload: { order: newOrder } });
+    },
+    [updateDocBlock],
+  );
 
   // ── Loading / error ─────────────────────────────────────────────────────
 
@@ -409,27 +410,54 @@ export default function PageEditorRoute() {
     );
   }
 
-  // ── Derived: are we in canvas mode? ─────────────────────────────────────
+  // ── Derived: view mode ───────────────────────────────────────────────────
   const isCanvas = page.view_mode === 'canvas';
 
-  // ── Derived: current custom type (for badge + type picker) ───────────────
+  // ── Derived: doc blocks — sorted, visible, non-deleted ──────────────────
+  // These are the blocks rendered by DocumentEditor in document mode.
+  const docBlocks = [...blocks]
+    .filter((b) => b.doc_visible && !b.is_deleted)
+    .sort((a, b) => a.order - b.order);
+
+  // ── Derived: canvas blocks — all canvas-visible blocks ──────────────────
+  // Passed to CanvasView; unchanged from previous behavior.
+  const canvasBlocks = blocks.filter((b) => b.canvas_visible);
+
+  // ── Derived: shared blocks — visible in both doc + canvas + positioned ───
+  const sharedBlocks = blocks.filter(
+    (b) => b.canvas_visible && b.doc_visible && b.canvas_x !== null,
+  );
+
+  // ── Derived: AI panel page content ──────────────────────────────────────
+  // Concatenate title + all doc block texts (text or code content).
+  const pageContent = `${title}\n\n${
+    docBlocks
+      .map((b) => {
+        const t = b.content.text;
+        const c = b.content.code;
+        return (typeof t === 'string' ? t : typeof c === 'string' ? c : '');
+      })
+      .filter(Boolean)
+      .join('\n')
+  }`;
+
+  // ── Derived: sync state — are all doc blocks synced to canvas? ──────────
+  const allSynced = docBlocks.length > 0 && docBlocks.every((b) => b.canvas_visible);
+
+  // ── Derived: current custom type ─────────────────────────────────────────
   const currentType = customTypes.find((t) => t.id === page.custom_page_type) ?? null;
 
   // ── Derived: effective accent color ──────────────────────────────────────
-  // Fallback chain: page override → type default → violet
   const effectiveColor = page.color || currentType?.default_color || '#7c3aed';
 
   // ── Derived: color_style helpers ─────────────────────────────────────────
-  const colorStyle  = page.color_style ?? 'both';
-  const showAccent  = colorStyle === 'accent' || colorStyle === 'both';
-  const showTint    = colorStyle === 'tint'   || colorStyle === 'both';
+  const colorStyle = page.color_style ?? 'both';
+  const showAccent = colorStyle === 'accent' || colorStyle === 'both';
+  const showTint   = colorStyle === 'tint'   || colorStyle === 'both';
 
   // ── Derived: cover URL ────────────────────────────────────────────────────
-  // header_pic_url (gallery/URL picks) takes priority over uploaded header_pic file.
-  // Trim header_pic_url — rejects stale blank-space placeholder values from DB.
-  // header_pic may be a relative path (/media/...) or already absolute; handle both.
-  const rawPic  = page.header_pic;
-  const picUrl  = rawPic
+  const rawPic = page.header_pic;
+  const picUrl = rawPic
     ? rawPic.startsWith('http')
       ? rawPic
       : `${process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000'}${rawPic}`
@@ -440,10 +468,57 @@ export default function PageEditorRoute() {
       ? page.header_pic_url.trim()
       : picUrl);
 
-  // ── Page options dropdown items ──────────────────────────────────────────
-  //
-  // When confirmingDelete is true the dropdown shows a two-step confirmation
-  // so the user cannot accidentally delete with a single click.
+  // ─────────────────────────────────────────────────────────────────────────
+  // Document block handlers (Phase 2 DocumentEditor)
+  // ─────────────────────────────────────────────────────────────────────────
+
+  /**
+   * Create a new block after `afterBlockId`.
+   * nextBlock is passed by DocumentEditor so we can compute a collision-free
+   * midpoint order instead of always using afterBlock.order + 0.5.
+   * afterBlockId=null → insert before any existing blocks.
+   */
+  function handleCreateBlock(
+    afterBlockId: string | null,
+    blockType: BlockType,
+    nextBlock?: Block | null,
+  ) {
+    const afterBlock = afterBlockId
+      ? docBlocks.find((b) => b.id === afterBlockId) ?? null
+      : null;
+    createDocBlock.mutate({ afterBlock, nextBlock: nextBlock ?? null, blockType });
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Canvas sync handler
+  // ─────────────────────────────────────────────────────────────────────────
+
+  /**
+   * Toggle canvas_visible on ALL doc blocks at once.
+   * When syncing for the first time, assign default canvas positions to
+   * blocks that don't yet have coordinates (matching CanvasView's grid).
+   */
+  function handleSyncToCanvas() {
+    const nextSynced = !allSynced;
+    docBlocks.forEach((b, idx) => {
+      const needsPosition = nextSynced && b.canvas_x === null;
+      updateBlock.mutate({
+        id:      b.id,
+        payload: {
+          canvas_visible: nextSynced,
+          ...(needsPosition ? {
+            canvas_x: (idx % 3) * 350 + 50,
+            canvas_y: Math.floor(idx / 3) * 250 + 50,
+            canvas_w: 300,
+          } : {}),
+        },
+      });
+    });
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Page options dropdown
+  // ─────────────────────────────────────────────────────────────────────────
 
   const pageMenuItems = confirmingDelete
     ? [
@@ -470,7 +545,6 @@ export default function PageEditorRoute() {
         {
           label:   'Rename',
           icon:    <Pencil size={13} />,
-          // Small delay lets the dropdown close animation finish before focus
           onClick: () => { setTimeout(() => titleInputRef.current?.focus(), 50); },
         },
         {
@@ -500,7 +574,9 @@ export default function PageEditorRoute() {
         },
       ];
 
-  // ── Render ──────────────────────────────────────────────────────────────
+  // ─────────────────────────────────────────────────────────────────────────
+  // RENDER
+  // ─────────────────────────────────────────────────────────────────────────
 
   return (
     <>
@@ -547,7 +623,7 @@ export default function PageEditorRoute() {
                 <ArrowLeft size={13} />
               </button>
 
-              {/* Page icon + title (read-only compact display) */}
+              {/* Page icon + title */}
               <span className="select-none text-base leading-none">{page.icon || '📄'}</span>
               <span className="max-w-45 truncate text-sm text-neutral-300">
                 {title || 'Untitled'}
@@ -580,26 +656,23 @@ export default function PageEditorRoute() {
                   AI
                 </button>
 
-                {/* Sync to canvas */}
-                {contentBlock && (
+                {/* Sync all doc blocks to canvas */}
+                {docBlocks.length > 0 && (
                   <button
-                    onClick={() => updateBlock.mutate({
-                      id:      contentBlock.id,
-                      payload: { canvas_visible: !contentBlock.canvas_visible },
-                    })}
+                    onClick={handleSyncToCanvas}
                     className={[
                       'flex items-center gap-1.5 rounded-lg px-2 py-1.5',
                       'text-xs transition-colors',
-                      contentBlock.canvas_visible
+                      allSynced
                         ? 'bg-violet-900/30 text-violet-400 hover:bg-violet-900/50'
                         : 'bg-neutral-800 text-neutral-500 hover:bg-neutral-700 hover:text-neutral-300',
                     ].join(' ')}
-                    title={contentBlock.canvas_visible
-                      ? 'Document synced to canvas — click to unsync'
-                      : 'Sync document preview to canvas card'}
+                    title={allSynced
+                      ? 'All doc blocks synced to canvas — click to unsync'
+                      : 'Sync all document blocks to canvas'}
                   >
                     <LayoutDashboard size={12} />
-                    <span>{contentBlock.canvas_visible ? 'Synced' : 'Sync to canvas'}</span>
+                    <span>{allSynced ? 'Synced' : 'Sync to canvas'}</span>
                   </button>
                 )}
 
@@ -706,27 +779,24 @@ export default function PageEditorRoute() {
                   AI
                 </button>
 
-                {/* Sync to canvas — toggles canvas_visible on the document content block */}
-                {contentBlock && (
+                {/* Sync all doc blocks to canvas */}
+                {docBlocks.length > 0 && (
                   <button
-                    onClick={() => updateBlock.mutate({
-                      id:      contentBlock.id,
-                      payload: { canvas_visible: !contentBlock.canvas_visible },
-                    })}
+                    onClick={handleSyncToCanvas}
                     className={[
                       'flex items-center gap-1.5 rounded-lg px-2 py-1.5',
                       'text-xs transition-colors',
-                      contentBlock.canvas_visible
+                      allSynced
                         ? 'bg-violet-900/30 text-violet-400 hover:bg-violet-900/50'
                         : 'bg-neutral-800 text-neutral-500 hover:bg-neutral-700 hover:text-neutral-300',
                     ].join(' ')}
-                    title={contentBlock.canvas_visible
-                      ? 'Document synced to canvas — click to unsync'
-                      : 'Sync document preview to canvas card'}
+                    title={allSynced
+                      ? 'All doc blocks synced to canvas — click to unsync'
+                      : 'Sync all document blocks to canvas'}
                   >
                     <LayoutDashboard size={12} />
                     <span>
-                      {contentBlock.canvas_visible ? 'Synced' : 'Sync to canvas'}
+                      {allSynced ? 'Synced' : 'Sync to canvas'}
                     </span>
                   </button>
                 )}
@@ -799,7 +869,6 @@ export default function PageEditorRoute() {
                   />
                   <span className="text-xs text-neutral-400">Color</span>
                 </button>
-
               </div>
 
               {/* Title row — input + optional type badge */}
@@ -808,6 +877,11 @@ export default function PageEditorRoute() {
                   ref={titleInputRef}
                   value={title}
                   onChange={handleTitleChange}
+                  onBlur={() => {
+                    if (title !== (page?.title ?? '')) {
+                      updatePage.mutate({ id: pageId, payload: { title } });
+                    }
+                  }}
                   placeholder="Untitled"
                   disabled={page.is_locked}
                   className={[
@@ -843,7 +917,7 @@ export default function PageEditorRoute() {
           </div>
         )}{/* end header section */}
 
-        {/* ── Content section — editor (document) or canvas ─────────────── */}
+        {/* ── Content section — DocumentEditor (document) or CanvasView ── */}
         {isCanvas ? (
 
           // ── Canvas mode: fills remaining flex height, full width ────────
@@ -857,7 +931,7 @@ export default function PageEditorRoute() {
                 updatePage.mutate({ id: pageId, payload: { view_mode: 'document' } })
               }
               title={page.title}
-              contentBlock={contentBlock}
+              contentBlock={docBlocks[0]}
               hasCover={!!coverUrl}
               coverExpanded={coverExpanded}
               onToggleCover={() => setCoverExpanded((v) => !v)}
@@ -881,7 +955,7 @@ export default function PageEditorRoute() {
 
         ) : (
 
-          // ── Document mode: constrained, scrollable editor ───────────────
+          // ── Document mode: constrained, scrollable DocumentEditor ───────
           <div className="mx-auto w-full max-w-3xl px-6 pb-10">
             {/* Accent line — rendered when color_style is 'accent' or 'both' */}
             {showAccent && (
@@ -890,27 +964,18 @@ export default function PageEditorRoute() {
                 className="h-0.5 w-full rounded-full mb-3 opacity-60"
               />
             )}
-            {/* TipTap editor — wrapped in error boundary to prevent blank screen on crash */}
-            <EditorErrorBoundary>
-              <Editor
-                ref={editorRef}
-                initialContent={initialContent}
-                onSave={handleSave}
-                onTextChange={setEditorText}
-                onSelectionChange={setSelectedText}
-                onCodeAction={(actionType, code) => {
-                  if (!aiPanelOpen) toggleAiPanel();
-                  setPendingAiAction({ actionType, content: code });
-                }}
-                onSelectionAction={(actionType, text) => {
-                  if (!aiPanelOpen) toggleAiPanel();
-                  setPendingAiAction({ actionType, content: text });
-                }}
-                readOnly={page.is_locked}
-                workspaceId={workspaceId}
-                pageId={pageId}
-              />
-            </EditorErrorBoundary>
+
+            {/* DocumentEditor — per-block editing (Phase 2+) */}
+            <DocumentEditor
+              blocks={docBlocks}
+              readOnly={page.is_locked}
+              onCreateBlock={handleCreateBlock}
+              onUpdateBlock={handleUpdateBlock}
+              onDeleteBlock={handleDeleteBlock}
+              onReorderBlock={handleReorderBlock}
+              pendingFocusBlockId={pendingFocusBlockId}
+              onFocusHandled={() => setPendingFocusBlockId(null)}
+            />
 
             {/* Bottom tab bar — Linked Pages + Canvas Blocks tabs */}
             <BottomTabBar
@@ -929,14 +994,9 @@ export default function PageEditorRoute() {
       {aiPanelOpen && (
         <AiPanel
           pageId={pageId}
-          pageContent={`${title}\n\n${editorText}`}
+          pageContent={pageContent}
           onClose={() => toggleAiPanel()}
           selectedText={selectedText}
-          onInsertResult={(text) => {
-            editorRef.current?.chain().focus().insertContent(text).run();
-          }}
-          pendingAction={pendingAiAction}
-          onPendingActionHandled={() => setPendingAiAction(null)}
         />
       )}
     </div>

@@ -127,3 +127,24 @@ export function useDeletePage(workspaceId: string) {
     },
   });
 }
+
+/**
+ * useMovePage — moves a page to a new parent and/or reorders it among siblings.
+ *
+ * Calls PATCH /api/pages/:id/move/ with { parent_id, order }.
+ * Invalidates the workspace page list so the sidebar re-fetches the new order.
+ */
+export function useMovePage(workspaceId: string) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ id, parentId, order }: {
+      id:       string;
+      parentId: string | null;
+      order:    number;
+    }) => pageApi.move(id, { parent_id: parentId, order }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: pageKeys.all(workspaceId) });
+    },
+  });
+}

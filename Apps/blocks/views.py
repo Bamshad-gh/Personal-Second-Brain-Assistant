@@ -1,4 +1,5 @@
 # Apps/blocks/views.py
+
 from rest_framework import status, generics
 from rest_framework.views import APIView
 from rest_framework.response import Response
@@ -8,7 +9,7 @@ from django.db import transaction
 from django.db.models import Max
 import uuid as uuid_lib
 
-from .models import Block
+from .models import Block, BLOCK_TYPE_REGISTRY
 from .serializers import (
     BlockSerializer,
     BlockCreateSerializer,
@@ -85,20 +86,57 @@ def _sync_page_links(block: Block, content_json: dict) -> None:
             conn.save(update_fields=['is_deleted'])
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Block type registry (public metadata)
+# ─────────────────────────────────────────────────────────────────────────────
+
+class BlockTypesView(APIView):
+    """
+    GET /api/blocks/types/
+
+    Returns BLOCK_TYPE_REGISTRY as a flat list of block type metadata objects.
+    The frontend uses this to build the slash menu, canvas block panel, and
+    any block-type picker dynamically — no hardcoded lists needed.
+
+    No authentication required — this is public, static metadata.
+
+    HOW TO ADD A NEW BLOCK TYPE:
+      Add to BLOCK_TYPE_REGISTRY in models.py.
+      This endpoint automatically includes it. No other changes needed.
+    """
+
+    permission_classes = []
+
+    def get(self, request):
+        types = [
+            {
+                'block_type':   block_type,
+                'category':     info['category'],
+                'has_children': info['has_children'],
+                'canvas_ok':    info['canvas_ok'],
+                'doc_ok':       info['doc_ok'],
+            }
+            for block_type, info in BLOCK_TYPE_REGISTRY.items()
+        ]
+        return Response(types)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Block CRUD
+# ─────────────────────────────────────────────────────────────────────────────
+
 class BlockListCreateView(generics.ListCreateAPIView):
     """
-    GET  /api/blocks/     → List blocks (filtered by page)
-    POST /api/blocks/     → Create a new block
+    GET  /api/blocks/?page=<uuid>  → List blocks for a page (flat, ordered)
+    POST /api/blocks/              → Create a new block
+
+    pagination_class = None — disables DRF's default page-number pagination
+    so ?page=<uuid> passes through to get_queryset() without being parsed
+    as an integer page number (which would raise InvalidPage → 404).
     """
 
     permission_classes = [IsAuthenticated]
-
-    # BUG FIX: DRF's global DEFAULT_PAGINATION_CLASS uses ?page= as its page-number
-    # query parameter. When the frontend sends GET /api/blocks/?page=<uuid>, DRF tries
-    # to parse the UUID as a page number integer → raises InvalidPage → 404.
-    # Setting pagination_class = None disables pagination on this view so that
-    # ?page=<uuid> is passed straight through to get_queryset() as a filter param.
-    pagination_class = None
+    pagination_class   = None
 
     def get_serializer_class(self):
         if self.request.method == 'POST':
@@ -106,26 +144,22 @@ class BlockListCreateView(generics.ListCreateAPIView):
         return BlockSerializer
 
     def get_queryset(self):
-        """Return blocks from pages in user's workspaces."""
         page_id = self.request.query_params.get('page')
-
         queryset = Block.objects.filter(
             page__workspace__owner=self.request.user,
-            is_deleted=False
+            is_deleted=False,
         ).select_related('page', 'parent')
-
         if page_id:
             queryset = queryset.filter(page_id=page_id)
-
         return queryset.order_by('order')
 
     def perform_create(self, serializer):
-        """Set order to max + 1 if not provided."""
+        """Auto-assign order = max + 1 when not provided."""
         if 'order' not in self.request.data:
-            page_id = self.request.data.get('page')
+            page_id   = self.request.data.get('page')
             max_order = Block.objects.filter(
                 page_id=page_id,
-                is_deleted=False
+                is_deleted=False,
             ).aggregate(max_order=Max('order'))['max_order'] or 0
             serializer.save(order=max_order + 1)
         else:
@@ -134,9 +168,9 @@ class BlockListCreateView(generics.ListCreateAPIView):
 
 class BlockDetailView(generics.RetrieveUpdateDestroyAPIView):
     """
-    GET    /api/blocks/{id}/  → Get block details
-    PATCH  /api/blocks/{id}/  → Update block
-    DELETE /api/blocks/{id}/  → Soft delete block
+    GET    /api/blocks/{id}/  → Retrieve block details
+    PATCH  /api/blocks/{id}/  → Update block (partial)
+    DELETE /api/blocks/{id}/  → Soft-delete block (and all children)
     """
 
     permission_classes = [IsAuthenticated]
@@ -147,14 +181,29 @@ class BlockDetailView(generics.RetrieveUpdateDestroyAPIView):
         return BlockSerializer
 
     def get_queryset(self):
-        """Users can only access blocks in their workspaces."""
         return Block.objects.filter(
             page__workspace__owner=self.request.user,
-            is_deleted=False
+            is_deleted=False,
         ).select_related('page', 'parent')
 
-    def perform_destroy(self, instance):
-        """Soft delete block and all its children."""
+    def delete(self, request, *args, **kwargs):
+        """
+        Soft-delete a block (and all its children recursively).
+        Idempotent: if the block is already deleted, return 200 instead of 404.
+        A real missing block (wrong owner or wrong pk) still returns 404.
+        """
+        try:
+            instance = Block.objects.get(
+                pk=kwargs['pk'],
+                page__workspace__owner=request.user,
+            )
+        except Block.DoesNotExist:
+            return Response(status=status.HTTP_404_NOT_FOUND)
+
+        if instance.is_deleted:
+            # Already deleted — idempotent success
+            return Response(status=status.HTTP_200_OK)
+
         def soft_delete_recursive(block):
             for child in block.children.filter(is_deleted=False):
                 soft_delete_recursive(child)
@@ -162,16 +211,17 @@ class BlockDetailView(generics.RetrieveUpdateDestroyAPIView):
             block.save(update_fields=['is_deleted'])
 
         soft_delete_recursive(instance)
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
     def update(self, request, *args, **kwargs):
-        partial = kwargs.pop('partial', False)
-        instance = self.get_object()
+        partial    = kwargs.pop('partial', False)
+        instance   = self.get_object()
         serializer = self.get_serializer(instance, data=request.data, partial=partial)
         serializer.is_valid(raise_exception=True)
         serializer.save()
 
         # Sync PAGE_LINK connections whenever content is included in the PATCH.
-        # Only runs when 'content' is present — skips canvas_x/y, doc_visible, etc.
+        # Skips canvas_x/y, doc_visible, and other non-content fields.
         content_payload = request.data.get('content')
         if isinstance(content_payload, dict):
             _sync_page_links(instance, content_payload.get('json') or {})
@@ -179,9 +229,16 @@ class BlockDetailView(generics.RetrieveUpdateDestroyAPIView):
         return Response(BlockSerializer(instance).data)
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Block utilities
+# ─────────────────────────────────────────────────────────────────────────────
+
 class BlockTreeView(APIView):
     """
-    GET /api/blocks/{id}/tree/  → Get block with children (for toggle, kanban)
+    GET /api/blocks/{id}/tree/
+
+    Returns a block with all its non-deleted children nested recursively.
+    Used for toggle blocks, kanban containers, and any has_children block type.
     """
 
     permission_classes = [IsAuthenticated]
@@ -191,16 +248,19 @@ class BlockTreeView(APIView):
             Block,
             pk=pk,
             page__workspace__owner=request.user,
-            is_deleted=False
+            is_deleted=False,
         )
-
-        serializer = BlockTreeSerializer(block)
-        return Response(serializer.data)
+        return Response(BlockTreeSerializer(block).data)
 
 
 class BlockReorderView(APIView):
     """
-    POST /api/blocks/reorder/  → Batch reorder blocks
+    POST /api/blocks/reorder/
+
+    Batch-updates the order field on multiple blocks in a single transaction.
+    Uses fractional ordering — no need to renumber siblings.
+
+    Expected payload: { "blocks": [{"id": "<uuid>", "order": 1.5}, ...] }
     """
 
     permission_classes = [IsAuthenticated]
@@ -208,7 +268,6 @@ class BlockReorderView(APIView):
     def post(self, request):
         serializer = BlockReorderSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-
         blocks_data = serializer.validated_data['blocks']
 
         with transaction.atomic():
@@ -216,7 +275,7 @@ class BlockReorderView(APIView):
                 Block.objects.filter(
                     id=item['id'],
                     page__workspace__owner=request.user,
-                    is_deleted=False
+                    is_deleted=False,
                 ).update(order=float(item['order']))
 
         return Response({'message': 'Blocks reordered successfully.'})
@@ -224,7 +283,12 @@ class BlockReorderView(APIView):
 
 class BlockDuplicateView(APIView):
     """
-    POST /api/blocks/{id}/duplicate/  → Duplicate a block with children
+    POST /api/blocks/{id}/duplicate/
+
+    Creates a full copy of the block at order = max_order + 1,
+    then recursively duplicates all child blocks under the new parent.
+    Canvas position fields are preserved on the duplicate.
+    Ownership enforced via page__workspace__owner — returns 404 not 403.
     """
 
     permission_classes = [IsAuthenticated]
@@ -234,31 +298,36 @@ class BlockDuplicateView(APIView):
             Block,
             pk=pk,
             page__workspace__owner=request.user,
-            is_deleted=False
+            is_deleted=False,
         )
 
-        # Get the order for the new block
         max_order = Block.objects.filter(
             page=original.page,
-            is_deleted=False
+            is_deleted=False,
         ).aggregate(max_order=Max('order'))['max_order'] or 0
 
         with transaction.atomic():
-            # Create duplicate
             new_block = Block.objects.create(
                 page=original.page,
                 parent=original.parent,
                 block_type=original.block_type,
                 content=original.content,
                 order=max_order + 1,
+                canvas_x=original.canvas_x,
+                canvas_y=original.canvas_y,
+                canvas_w=original.canvas_w,
+                canvas_h=original.canvas_h,
+                canvas_z=original.canvas_z,
+                doc_visible=original.doc_visible,
+                canvas_visible=original.canvas_visible,
+                bg_color=original.bg_color,
             )
 
-            # Recursively duplicate children
-            def duplicate_children(source_block, target_block):
-                for child in source_block.children.filter(is_deleted=False):
+            def duplicate_children(source: Block, target: Block) -> None:
+                for child in source.children.filter(is_deleted=False):
                     new_child = Block.objects.create(
-                        page=source_block.page,
-                        parent=target_block,
+                        page=source.page,
+                        parent=target,
                         block_type=child.block_type,
                         content=child.content,
                         order=child.order,
@@ -267,12 +336,17 @@ class BlockDuplicateView(APIView):
 
             duplicate_children(original, new_block)
 
-        return Response(BlockSerializer(new_block).data, status=201)
+        return Response(BlockSerializer(new_block).data, status=status.HTTP_201_CREATED)
 
 
 class BlockMoveView(APIView):
     """
-    POST /api/blocks/{id}/move/  → Move block to a different page or parent
+    POST /api/blocks/{id}/move/
+
+    Moves a block to a different page or re-parents it under a different block.
+    When moving to a new page, parent is cleared. When re-parenting, the block
+    is moved to the parent's page automatically.
+    Ownership enforced via page__workspace__owner — returns 404 not 403.
     """
 
     permission_classes = [IsAuthenticated]
@@ -282,10 +356,10 @@ class BlockMoveView(APIView):
             Block,
             pk=pk,
             page__workspace__owner=request.user,
-            is_deleted=False
+            is_deleted=False,
         )
 
-        new_page_id = request.data.get('page')
+        new_page_id   = request.data.get('page')
         new_parent_id = request.data.get('parent')
 
         if new_page_id:
@@ -293,9 +367,9 @@ class BlockMoveView(APIView):
                 Page,
                 pk=new_page_id,
                 workspace__owner=request.user,
-                is_deleted=False
+                is_deleted=False,
             )
-            block.page = new_page
+            block.page   = new_page
             block.parent = None
 
         if new_parent_id:
@@ -303,10 +377,10 @@ class BlockMoveView(APIView):
                 Block,
                 pk=new_parent_id,
                 page__workspace__owner=request.user,
-                is_deleted=False
+                is_deleted=False,
             )
             block.parent = new_parent
-            block.page = new_parent.page
+            block.page   = new_parent.page
 
         block.save()
         return Response(BlockSerializer(block).data)

@@ -218,6 +218,18 @@ export const Editor = forwardRef<TipTapEditor, EditorProps>(function Editor({
   // Selection popup — shown above selected text
   const [selectionPopup, setSelectionPopup] = useState<{ rect: DOMRect; text: string } | null>(null);
 
+  // Text color picker — swatch dropdown portal
+  const [colorPickerOpen, setColorPickerOpen] = useState(false);
+  const [colorPickerRect, setColorPickerRect] = useState<DOMRect | null>(null);
+  const colorBtnRef      = useRef<HTMLButtonElement>(null);
+  const colorDropdownRef = useRef<HTMLDivElement>(null);
+
+  // Highlight picker — swatch dropdown portal
+  const [highlightOpen, setHighlightOpen] = useState(false);
+  const [highlightRect, setHighlightRect] = useState<DOMRect | null>(null);
+  const highlightBtnRef      = useRef<HTMLButtonElement>(null);
+  const highlightDropdownRef = useRef<HTMLDivElement>(null);
+
   // Mount guard — prevents portals from rendering during SSR
   const [mounted, setMounted] = useState(false);
 
@@ -566,6 +578,38 @@ export const Editor = forwardRef<TipTapEditor, EditorProps>(function Editor({
   useEffect(() => {
     return () => { clearHoverTimer(); cancelDismiss(); };
   }, []);
+
+  // Close color picker on outside click
+  useEffect(() => {
+    function handle(e: MouseEvent) {
+      const target = e.target as Node;
+      if (
+        colorDropdownRef.current?.contains(target) ||
+        colorBtnRef.current?.contains(target)
+      ) return;
+      setColorPickerOpen(false);
+    }
+    if (colorPickerOpen) {
+      document.addEventListener('mousedown', handle);
+      return () => document.removeEventListener('mousedown', handle);
+    }
+  }, [colorPickerOpen]);
+
+  // Close highlight picker on outside click
+  useEffect(() => {
+    function handle(e: MouseEvent) {
+      const target = e.target as Node;
+      if (
+        highlightDropdownRef.current?.contains(target) ||
+        highlightBtnRef.current?.contains(target)
+      ) return;
+      setHighlightOpen(false);
+    }
+    if (highlightOpen) {
+      document.addEventListener('mousedown', handle);
+      return () => document.removeEventListener('mousedown', handle);
+    }
+  }, [highlightOpen]);
 
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   // VOICE TO TEXT — Web Speech API (Chrome/Edge) + Whisper fallback
@@ -1008,21 +1052,38 @@ export const Editor = forwardRef<TipTapEditor, EditorProps>(function Editor({
 
         <div className="mx-1 h-4 w-px bg-neutral-800" />
 
-        {/* Highlight — toggles violet background on selected text */}
-        <BubbleButton
-          onClick={() => editor.chain().focus().toggleHighlight({ color: '#7c3aed33' }).run()}
-          isActive={editor.isActive('highlight')}
-          title="Highlight"
+        {/* Highlight — swatch dropdown */}
+        <button
+          ref={highlightBtnRef}
+          onClick={() => {
+            setHighlightRect(highlightBtnRef.current?.getBoundingClientRect() ?? null);
+            setHighlightOpen((o) => !o);
+            setColorPickerOpen(false);
+          }}
+          title="Highlight color"
+          className={[
+            'flex h-7 w-7 items-center justify-center rounded-md text-sm transition-colors',
+            editor.isActive('highlight')
+              ? 'bg-violet-600/40 text-violet-300'
+              : 'text-neutral-400 hover:bg-white/10 hover:text-neutral-200',
+          ].join(' ')}
         >
           <Highlighter size={13} />
-        </BubbleButton>
+        </button>
 
-        {/* Text color — native color picker */}
-        <ColorPickerButton
+        {/* Text color — swatch dropdown */}
+        <button
+          ref={colorBtnRef}
+          onClick={() => {
+            setColorPickerRect(colorBtnRef.current?.getBoundingClientRect() ?? null);
+            setColorPickerOpen((o) => !o);
+            setHighlightOpen(false);
+          }}
           title="Text color"
-          onChange={(color) => editor.chain().focus().setColor(color).run()}
-          onReset={() => editor.chain().focus().unsetColor().run()}
-        />
+          className="flex h-7 w-7 items-center justify-center rounded-md text-sm text-neutral-400 transition-colors hover:bg-white/10 hover:text-neutral-200"
+        >
+          <Palette size={13} />
+        </button>
 
         <div className="mx-1 h-4 w-px bg-neutral-800" />
 
@@ -1064,6 +1125,108 @@ export const Editor = forwardRef<TipTapEditor, EditorProps>(function Editor({
               {({ explain_code: '🔍 Explain', add_comments: '💬 Comment', fix_code: '🐛 Fix' } as Record<string, string>)[type]}
             </button>
           ))}
+        </div>,
+        document.body
+      )}
+
+      {/* ── Highlight color swatch dropdown ──────────────────────────────── */}
+      {mounted && highlightOpen && highlightRect && createPortal(
+        <div
+          ref={highlightDropdownRef}
+          style={{
+            position: 'fixed',
+            top:  highlightRect.bottom + 4,
+            left: Math.min(highlightRect.left, window.innerWidth - 176),
+            zIndex: 99999,
+          }}
+          className="flex flex-wrap gap-1.5 rounded-lg border border-neutral-700
+                     bg-neutral-900 p-2 shadow-xl"
+        >
+          {([
+            { color: '#fef08a', label: 'Yellow' },
+            { color: '#bbf7d0', label: 'Green'  },
+            { color: '#bfdbfe', label: 'Blue'   },
+            { color: '#fecaca', label: 'Red'    },
+            { color: '#e9d5ff', label: 'Purple' },
+            { color: '#fed7aa', label: 'Orange' },
+          ] as { color: string; label: string }[]).map(({ color, label }) => (
+            <button
+              key={color}
+              title={label}
+              onMouseDown={(e) => {
+                e.preventDefault();
+                editor.chain().focus().toggleHighlight({ color }).run();
+                setHighlightOpen(false);
+              }}
+              style={{ backgroundColor: color }}
+              className="h-5 w-5 rounded border border-neutral-600 transition-transform hover:scale-110"
+            />
+          ))}
+          {/* Remove highlight */}
+          <button
+            title="Remove highlight"
+            onMouseDown={(e) => {
+              e.preventDefault();
+              editor.chain().focus().unsetHighlight().run();
+              setHighlightOpen(false);
+            }}
+            className="h-5 w-5 rounded border border-neutral-600 bg-neutral-800
+                       text-[9px] text-neutral-400 transition-colors hover:bg-neutral-700"
+          >
+            ✕
+          </button>
+        </div>,
+        document.body
+      )}
+
+      {/* ── Text color swatch dropdown ────────────────────────────────────── */}
+      {mounted && colorPickerOpen && colorPickerRect && createPortal(
+        <div
+          ref={colorDropdownRef}
+          style={{
+            position: 'fixed',
+            top:  colorPickerRect.bottom + 4,
+            left: Math.min(colorPickerRect.left, window.innerWidth - 176),
+            zIndex: 99999,
+          }}
+          className="flex flex-wrap gap-1.5 rounded-lg border border-neutral-700
+                     bg-neutral-900 p-2 shadow-xl"
+        >
+          {([
+            { color: '#ef4444', label: 'Red'    },
+            { color: '#f97316', label: 'Orange' },
+            { color: '#eab308', label: 'Yellow' },
+            { color: '#22c55e', label: 'Green'  },
+            { color: '#3b82f6', label: 'Blue'   },
+            { color: '#a855f7', label: 'Purple' },
+            { color: '#ec4899', label: 'Pink'   },
+            { color: '#94a3b8', label: 'Gray'   },
+          ] as { color: string; label: string }[]).map(({ color, label }) => (
+            <button
+              key={color}
+              title={label}
+              onMouseDown={(e) => {
+                e.preventDefault();
+                editor.chain().focus().setColor(color).run();
+                setColorPickerOpen(false);
+              }}
+              style={{ backgroundColor: color }}
+              className="h-5 w-5 rounded border border-neutral-600 transition-transform hover:scale-110"
+            />
+          ))}
+          {/* Reset to default */}
+          <button
+            title="Default color"
+            onMouseDown={(e) => {
+              e.preventDefault();
+              editor.chain().focus().unsetColor().run();
+              setColorPickerOpen(false);
+            }}
+            className="h-5 w-5 rounded border border-neutral-600 bg-neutral-800
+                       text-[9px] text-neutral-400 transition-colors hover:bg-neutral-700"
+          >
+            ✕
+          </button>
         </div>,
         document.body
       )}

@@ -36,6 +36,7 @@ import type {
   Workspace,
   Page,
   Block,
+  BlockTypeInfo,
   Connection,
   BlockConnection,
   BacklinkPage,
@@ -465,6 +466,12 @@ export const pageApi = {
     await axiosInstance.delete(`/api/pages/${pageId}/cover/`);
   },
 
+  /** PATCH /api/pages/:id/move/ — move page to a new parent and/or reorder among siblings */
+  move: async (id: string, payload: { parent_id: string | null; order: number }): Promise<Page> => {
+    const { data } = await axiosInstance.patch<Page>(`/api/pages/${id}/move/`, payload);
+    return data;
+  },
+
   /** GET /api/pages/gallery/ — list curated cover images from media/gallery/ */
   getGallery: async (): Promise<GalleryImage[]> => {
     const { data } = await axiosInstance.get<GalleryImage[]>('/api/pages/gallery/');
@@ -530,6 +537,16 @@ export const blockApi = {
   /** POST /api/blocks/reorder/ — update order of multiple blocks at once */
   reorder: async (payload: ReorderBlocksPayload): Promise<void> => {
     await axiosInstance.post('/api/blocks/reorder/', payload);
+  },
+
+  /**
+   * GET /api/blocks/types/ — list all block types from BLOCK_TYPE_REGISTRY.
+   * No auth required. Used to build dynamic slash menus and block panels
+   * without hardcoding block type lists in the frontend.
+   */
+  getTypes: async (): Promise<BlockTypeInfo[]> => {
+    const { data } = await axiosInstance.get<BlockTypeInfo[]>('/api/blocks/types/');
+    return data;
   },
 };
 

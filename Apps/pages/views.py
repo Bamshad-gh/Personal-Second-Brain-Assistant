@@ -214,42 +214,60 @@ class PageChildrenView(APIView):
 
 class PageMoveView(APIView):
     """
-    POST /api/pages/{id}/move/  → Move page to a new parent or workspace
+    PATCH /api/pages/{id}/move/
+
+    Move a page to a new parent and/or set its sort order among siblings.
+
+    Request body:
+      parent_id  (str | null)  — target parent page UUID, or null for root
+      order      (int)         — 0-based position among the new parent's children
     """
 
     permission_classes = [IsAuthenticated]
 
-    def post(self, request, pk):
+    def patch(self, request, pk):
         page = get_object_or_404(
             Page,
             pk=pk,
             workspace__owner=request.user,
-            is_deleted=False
+            is_deleted=False,
         )
 
-        new_parent_id = request.data.get('parent')
-        new_workspace_id = request.data.get('workspace')
-
-        if new_parent_id:
+        # ── Resolve new parent ────────────────────────────────────────────────
+        parent_id = request.data.get('parent_id')
+        if parent_id is not None and parent_id != '':
             new_parent = get_object_or_404(
                 Page,
-                pk=new_parent_id,
+                pk=parent_id,
                 workspace__owner=request.user,
-                is_deleted=False
+                is_deleted=False,
             )
-            page.parent = new_parent
+            page.parent    = new_parent
             page.workspace = new_parent.workspace
-        elif new_workspace_id:
-            new_workspace = get_object_or_404(
-                Workspace,
-                pk=new_workspace_id,
-                owner=request.user,
-                is_deleted=False
-            )
-            page.workspace = new_workspace
+        else:
+            # Moving to root — keep same workspace, clear parent
             page.parent = None
 
+        # ── Set order ─────────────────────────────────────────────────────────
+        new_order = int(request.data.get('order', 0))
+        page.order = new_order
         page.save()
+
+        # ── Renumber siblings so there are no gaps or collisions ─────────────
+        # Get all siblings (same workspace + parent) sorted by current order,
+        # excluding the moved page itself.
+        siblings = list(
+            Page.objects.filter(
+                workspace=page.workspace,
+                parent=page.parent,
+                is_deleted=False,
+            ).exclude(pk=page.pk).order_by('order', '-updated_at')
+        )
+        # Slot the moved page in at new_order; shift others around it.
+        for i, sib in enumerate(siblings):
+            sib.order = i if i < new_order else i + 1
+            sib.save(update_fields=['order'])
+
         return Response(PageSerializer(page).data)
 
 

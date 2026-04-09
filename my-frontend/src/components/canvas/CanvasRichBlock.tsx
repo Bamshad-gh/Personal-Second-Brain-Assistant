@@ -15,6 +15,16 @@
  *   block    — the rich Block being edited (canvas_x/y/w required)
  *   onSave   — called with new TipTap JSON (debounced + on close)
  *   onClose  — tells CanvasView to clear editingBlockId
+ *
+ * Layout:
+ *   Outer container is position:absolute (canvas placement) with overflow:hidden.
+ *   Background color matches block.bg_color (defaults to #1a1a1a).
+ *   Text color is computed from luminance so it is always readable on the bg.
+ *   Header is a normal block-level div (~36px tall).
+ *   Editor wrapper is position:absolute; top:36; left:0; right:0; bottom:0 so it
+ *   always fills the remaining height regardless of how the block is resized.
+ *   globals.css adds `color: inherit !important` to .tiptap-editor .ProseMirror
+ *   so TipTap inherits the correct text color from the wrapper div.
  */
 
 'use client';
@@ -58,10 +68,37 @@ interface CanvasRichBlockProps {
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// HELPER
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+function isLightBg(hex: string): boolean {
+  if (!hex) {
+    if (typeof window !== 'undefined') {
+      return document.documentElement.classList.contains('light') ||
+        !document.documentElement.classList.contains('dark');
+    }
+    return false;
+  }
+  const r = parseInt(hex.slice(1, 3), 16);
+  const g = parseInt(hex.slice(3, 5), 16);
+  const b = parseInt(hex.slice(5, 7), 16);
+  return (r * 299 + g * 587 + b * 114) / 1000 > 128;
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // COMPONENT
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 export function CanvasRichBlock({ block, onSave, onClose }: CanvasRichBlockProps) {
+
+  // ── Background / text color derived from block color ─────────────────────
+  const bgColor   = block.bg_color || '';
+  const textColor = isLightBg(bgColor) ? '#111827' : '#f9fafb';
+
+  // ── Header background — semi-transparent overlay over block color ─────────
+  const headerBg        = isLightBg(bgColor) ? 'rgba(0,0,0,0.18)'  : 'rgba(255,255,255,0.18)';
+  const headerBorder    = isLightBg(bgColor) ? 'rgba(0,0,0,0.25)'  : 'rgba(255,255,255,0.25)';
+  const headerTextColor = isLightBg(bgColor) ? '#000000'            : '#ffffff';
 
   // ── Slash menu state ──────────────────────────────────────────────────────
   const [slashOpen,    setSlashOpen]    = useState(false);
@@ -191,6 +228,10 @@ export function CanvasRichBlock({ block, onSave, onClose }: CanvasRichBlockProps
   const top   = block.canvas_y ?? 0;
   const width = Math.max(block.canvas_w ?? 300, 480);
 
+  // ── Height — local state so resize prop changes re-render smoothly ────────
+  const [localHeight, setLocalHeight] = useState(block.canvas_h ?? 320);
+  useEffect(() => { setLocalHeight(block.canvas_h ?? 320); }, [block.canvas_h]);
+
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   // RENDER
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -200,35 +241,73 @@ export function CanvasRichBlock({ block, onSave, onClose }: CanvasRichBlockProps
       {/* ── Editor card ─────────────────────────────────────────────────── */}
       <div
         ref={containerRef}
-        style={{ position: 'absolute', left, top, width, height: block.canvas_h ?? 320, zIndex: 100 }}
-        className="flex flex-col rounded-xl border border-violet-500 bg-neutral-900 shadow-2xl shadow-violet-500/20"
+        style={{
+          position:        'absolute',
+          left,
+          top,
+          width,
+          height:          localHeight,
+          overflow:        'hidden',
+          zIndex:          100,
+          backgroundColor: bgColor || undefined,
+          color:           textColor,
+        }}
+        className="rounded-xl border border-violet-500 shadow-2xl shadow-violet-500/20"
         // Stop pointer events from bubbling to CanvasView (prevents canvas pan/select)
         onPointerDown={(e) => e.stopPropagation()}
         onClick={(e) => e.stopPropagation()}
       >
         {/* ── Header ─────────────────────────────────────────────────────── */}
-        <div className="flex shrink-0 items-center gap-1.5 border-b border-violet-500/30 px-3 py-1.5">
-          <span className="text-xs text-violet-400">≡ Rich</span>
+        <div
+          style={{
+            backgroundColor: headerBg,
+            borderBottom:    `1px solid ${headerBorder}`,
+            color:           headerTextColor,
+            padding:         '6px 10px',
+            display:         'flex',
+            alignItems:      'center',
+            gap:             '6px',
+            flexShrink:      0,
+          }}
+        >
+          <span style={{ color: headerTextColor, fontSize: '11px' }}>≡ Rich</span>
           <button
             type="button"
             onClick={handleClose}
             title="Close editor (Esc)"
-            className="ml-auto flex h-5 w-5 items-center justify-center rounded text-neutral-500 transition-colors hover:bg-red-950/30 hover:text-red-400"
+            className="ml-auto flex h-5 w-5 items-center justify-center rounded transition-colors hover:bg-red-950/30"
+            style={{ color: headerTextColor, opacity: 0.8 }}
           >
             <X size={11} />
           </button>
         </div>
 
-        {/* ── Editor content ─────────────────────────────────────────────── */}
+        {/* ── Editor content — absolutely fills space below the header ──── */}
+        {/* color cascades to .ProseMirror via `color: inherit !important` in globals.css */}
         <div
-          className={[
-            'tiptap-editor flex-1 overflow-y-auto p-3',
-            'text-sm text-neutral-200',
-            '[&_.ProseMirror]:outline-none',
-            '[&_.ProseMirror]:min-h-48',
-          ].join(' ')}
+          style={{
+            position:      'absolute',
+            top:           36,
+            left:          0,
+            right:         0,
+            bottom:        0,
+            overflowY:     'auto',
+            display:       'flex',
+            flexDirection: 'column',
+            color:         textColor,
+          }}
+          className="tiptap-editor"
         >
-          <EditorContent editor={editor} />
+          <div
+            className={[
+              'flex-1 min-h-0 p-3',
+              'text-sm',
+              '[&_.ProseMirror]:outline-none',
+              '[&_.ProseMirror]:min-h-48',
+            ].join(' ')}
+          >
+            <EditorContent editor={editor} />
+          </div>
         </div>
       </div>
 

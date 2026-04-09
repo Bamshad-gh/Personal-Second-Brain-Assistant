@@ -66,6 +66,7 @@ import { CanvasArrow }        from './CanvasArrow';
 import { CanvasToolbar }      from './CanvasToolbar';
 import { CanvasDocumentCard } from './CanvasDocumentCard';
 import { CanvasRichBlock }    from './CanvasRichBlock';
+import { CanvasMinimap }      from './CanvasMinimap';
 import type { Block, BlockType } from '@/types';
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -162,6 +163,12 @@ function defaultPosition(index: number): { x: number; y: number } {
   };
 }
 
+const GRID_SIZE = 24; // matches dot-grid background-size in globals.css
+
+function snapToGrid(v: number): number {
+  return Math.round(v / GRID_SIZE) * GRID_SIZE;
+}
+
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // COMPONENT — CanvasView
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -191,6 +198,10 @@ export function CanvasView({
 
   // ── Rich block editing state ──────────────────────────────────────────────
   const [editingBlockId, setEditingBlockId] = useState<string | null>(null);
+
+  // ── Snap-to-grid + minimap ────────────────────────────────────────────────
+  const [snapEnabled,    setSnapEnabled]    = useState(false);
+  const [containerSize,  setContainerSize]  = useState({ w: 0, h: 0 });
 
   // ── Panel tab state ───────────────────────────────────────────────────────
   const [panelTab, setPanelTab] = useState<'types' | 'shared'>('types');
@@ -304,6 +315,19 @@ export function CanvasView({
     return () => observer.disconnect();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [canvasBlocks]);
+
+  // ── Container size (for minimap viewport rect) ───────────────────────────
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const obs = new ResizeObserver((entries) => {
+      const r = entries[0].contentRect;
+      setContainerSize({ w: r.width, h: r.height });
+    });
+    obs.observe(el);
+    setContainerSize({ w: el.offsetWidth, h: el.offsetHeight });
+    return () => obs.disconnect();
+  }, []);
 
   // ── Space key + Escape listener ───────────────────────────────────────────
   useEffect(() => {
@@ -682,29 +706,36 @@ export function CanvasView({
 
           return (
             <Fragment key={block.id}>
-              <CanvasBlock
-                block={blockWithPos}
-                isSelected={selectedId === block.id}
-                onSelect={() => { setSelectedId(block.id); setSelectedConnectionId(null); }}
-                onDelete={() => deleteBlock.mutate(block.id)}
-                onToggleVisibility={() =>
-                  updateBlock.mutate({ id: block.id, payload: { doc_visible: !block.doc_visible } })
-                }
-                onDragEnd={(x, y) => {
-                  updateBlockRef.current({ id: block.id, payload: { canvas_x: x, canvas_y: y } });
-                }}
-                onResizeEnd={(w, h) => {
-                  const payload = h > 0 ? { canvas_w: w, canvas_h: h } : { canvas_w: w };
-                  updateBlock.mutate({ id: block.id, payload });
-                }}
-                onContentSave={(_blockId, json) =>
-                  updateBlock.mutate({ id: block.id, payload: { content: { json } } })
-                }
-                onEditStart={() => setEditingBlockId(block.id)}
-                onColorChange={(color) =>
-                  updateBlock.mutate({ id: block.id, payload: { bg_color: color } })
-                }
-              />
+              <div style={{
+                opacity:       editingBlockId === block.id ? 0 : 1,
+                pointerEvents: editingBlockId === block.id ? 'none' : undefined,
+              }}>
+                <CanvasBlock
+                  block={blockWithPos}
+                  isSelected={selectedId === block.id}
+                  onSelect={() => { setSelectedId(block.id); setSelectedConnectionId(null); }}
+                  onDelete={() => deleteBlock.mutate(block.id)}
+                  onToggleVisibility={() =>
+                    updateBlock.mutate({ id: block.id, payload: { doc_visible: !block.doc_visible } })
+                  }
+                  onDragEnd={(x, y) => {
+                    const fx = snapEnabled ? snapToGrid(x) : x;
+                    const fy = snapEnabled ? snapToGrid(y) : y;
+                    updateBlockRef.current({ id: block.id, payload: { canvas_x: fx, canvas_y: fy } });
+                  }}
+                  onResizeEnd={(w, h) => {
+                    const payload = h > 0 ? { canvas_w: w, canvas_h: h } : { canvas_w: w };
+                    updateBlock.mutate({ id: block.id, payload });
+                  }}
+                  onContentSave={(_blockId, json) =>
+                    updateBlock.mutate({ id: block.id, payload: { content: { json } } })
+                  }
+                  onEditStart={() => setEditingBlockId(block.id)}
+                  onColorChange={(color) =>
+                    updateBlock.mutate({ id: block.id, payload: { bg_color: color } })
+                  }
+                />
+              </div>
 
               {/* ── Edge connection handles ──────────────────────────────────
                   Handle dots have zIndex 30, above CanvasBlock (zIndex 0).
@@ -858,6 +889,54 @@ export function CanvasView({
           onToggleCover={onToggleCover}
         />
       )}
+
+      {/* ── Minimap + snap toggle (bottom-right, outside transform) ─────── */}
+      <div
+        style={{
+          position:      'absolute',
+          bottom:         16,
+          right:          16,
+          zIndex:         20,
+          display:       'flex',
+          flexDirection: 'column',
+          alignItems:    'flex-end',
+          gap:            6,
+          pointerEvents: 'auto',
+        }}
+        // Stop canvas pan/select from triggering through this overlay
+        onPointerDown={(e) => e.stopPropagation()}
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Snap toggle */}
+        <button
+          type="button"
+          onClick={() => setSnapEnabled(s => !s)}
+          style={{
+            fontSize:     10,
+            padding:      '2px 8px',
+            borderRadius:  6,
+            border:       `1px solid ${snapEnabled ? '#7c3aed' : '#3f3f46'}`,
+            background:    snapEnabled ? '#4c1d95' : '#18181b',
+            color:         snapEnabled ? '#c4b5fd' : '#71717a',
+            cursor:       'pointer',
+            userSelect:   'none',
+            lineHeight:   '16px',
+          }}
+        >
+          ⊞ Snap
+        </button>
+
+        {/* Minimap */}
+        <CanvasMinimap
+          blocks={canvasBlocks}
+          panX={panX}
+          panY={panY}
+          scale={scale}
+          containerWidth={containerSize.w}
+          containerHeight={containerSize.h}
+          onNavigate={(nx, ny) => updatePan(nx, ny)}
+        />
+      </div>
     </div>
   );
 }

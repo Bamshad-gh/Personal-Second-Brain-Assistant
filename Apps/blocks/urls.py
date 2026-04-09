@@ -1,4 +1,5 @@
 # Apps/blocks/urls.py
+
 from django.urls import path
 from .views import (
     BlockListCreateView,
@@ -7,24 +8,18 @@ from .views import (
     BlockReorderView,
     BlockDuplicateView,
     BlockMoveView,
+    BlockTypesView,
 )
 
 urlpatterns = [
-    # List & Create
-    path('', BlockListCreateView.as_view(), name='block-list-create'),
+    # ── Collection endpoints ──────────────────────────────────────────────────
+    path('',          BlockListCreateView.as_view(), name='block-list-create'),
+    path('types/',    BlockTypesView.as_view(),      name='block-types'),
+    path('reorder/',  BlockReorderView.as_view(),    name='block-reorder'),
 
-    # Retrieve, Update, Delete
-    path('<uuid:pk>/', BlockDetailView.as_view(), name='block-detail'),
-
-    # Block tree (with children)
-    path('<uuid:pk>/tree/', BlockTreeView.as_view(), name='block-tree'),
-
-    # Batch reorder
-    path('reorder/', BlockReorderView.as_view(), name='block-reorder'),
-
-    # Duplicate block
-    path('<uuid:pk>/duplicate/', BlockDuplicateView.as_view(), name='block-duplicate'),
-
-    # Move block
-    path('<uuid:pk>/move/', BlockMoveView.as_view(), name='block-move'),
+    # ── Single-block endpoints ────────────────────────────────────────────────
+    path('<uuid:pk>/',            BlockDetailView.as_view(),   name='block-detail'),
+    path('<uuid:pk>/tree/',       BlockTreeView.as_view(),     name='block-tree'),
+    path('<uuid:pk>/duplicate/',  BlockDuplicateView.as_view(), name='block-duplicate'),
+    path('<uuid:pk>/move/',       BlockMoveView.as_view(),     name='block-move'),
 ]

@@ -33,6 +33,18 @@
  *   image    → <img src={content.src}>
  *   rich     → structured read-only preview (double-click to open full editor)
  *   other    → grey placeholder label
+ *
+ * Layout:
+ *   Root div is position:absolute (canvas placement) and serves as the
+ *   containing block for absolutely-positioned children.
+ *   When the block has an explicit height (localH > 0) the content area uses
+ *   position:absolute to fill the space below the header perfectly.
+ *   headerHeight accounts for the sticky amber strip (44px) vs normal (36px).
+ *   When height is auto (localH === 0) the content area flows normally.
+ *
+ * Color cascade:
+ *   dynamicTextColor is set on the content area div and cascades to all
+ *   children automatically — sub-components need no individual color prop.
  */
 
 'use client';
@@ -42,6 +54,7 @@
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 import { useState, useEffect, useRef, type ReactNode }  from 'react';
+import { createPortal }                 from 'react-dom';
 import { useEditor, EditorContent }     from '@tiptap/react';
 import StarterKit                       from '@tiptap/starter-kit';
 import { GripVertical, X, FileText }    from 'lucide-react';
@@ -52,14 +65,17 @@ import type { Block }                   from '@/types';
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 const COLOR_SWATCHES: { color: string; label: string }[] = [
-  { color: '',        label: 'Default' },
-  { color: '#fef9c3', label: 'Yellow'  },
-  { color: '#dcfce7', label: 'Green'   },
-  { color: '#dbeafe', label: 'Blue'    },
-  { color: '#fce7f3', label: 'Pink'    },
-  { color: '#ede9fe', label: 'Violet'  },
-  { color: '#fee2e2', label: 'Red'     },
-  { color: '#f1f5f9', label: 'Slate'   },
+  { color: '',        label: 'Default'      },
+  { color: '#854d0e', label: 'Amber'        },  // dark amber
+  { color: '#166534', label: 'Green'        },  // dark green
+  { color: '#1e40af', label: 'Blue'         },  // dark blue
+  { color: '#9d174d', label: 'Pink'         },  // dark pink
+  { color: '#4c1d95', label: 'Violet'       },  // dark violet
+  { color: '#991b1b', label: 'Red'          },  // dark red
+  { color: '#1f2937', label: 'Slate'        },  // dark slate
+  { color: '#fef9c3', label: 'Light Yellow' },  // light yellow
+  { color: '#dcfce7', label: 'Light Green'  },  // light green
+  { color: '#dbeafe', label: 'Light Blue'   },  // light blue
 ];
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -120,6 +136,10 @@ export function CanvasBlock({
   onColorChange,
 }: CanvasBlockProps) {
 
+  // ── Portal mount guard (SSR-safe) ────────────────────────────────────────
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => { setMounted(true); }, []);
+
   // ── Position / size state (local for live drag/resize preview) ────────────
   const [localX, setLocalX] = useState(block.canvas_x ?? 0);
   const [localY, setLocalY] = useState(block.canvas_y ?? 0);
@@ -129,6 +149,8 @@ export function CanvasBlock({
   // ── Color picker state ────────────────────────────────────────────────────
   const [colorPickerOpen, setColorPickerOpen] = useState(false);
   const [localColor,      setLocalColor]      = useState(block.bg_color ?? '');
+  const [pickerRect,      setPickerRect]      = useState<DOMRect | null>(null);
+  const colorBtnRef   = useRef<HTMLButtonElement>(null);
   const colorDirtyRef = useRef(false);
 
   // Sync localColor from prop only when no local change is pending.
@@ -291,10 +313,25 @@ export function CanvasBlock({
   // ── Sticky note variant ───────────────────────────────────────────────────
   const isSticky = block.block_type === 'sticky';
 
-  // ── Text color based on applied background ────────────────────────────────
-  // True when localColor is a light pastel — forces dark text for readability
-  const textOnColor = isLightColor(localColor);
-  const textColor   = localColor && isLightColor(localColor) ? '#1f2937' : undefined;
+  // ── Text color that cascades to all content children ─────────────────────
+  // Explicit: dark text on light bg, light text on dark bg, undefined = CSS default
+  const dynamicTextColor: string | undefined = localColor
+    ? isLightColor(localColor)
+      ? '#1f2937'   // dark text on light background
+      : '#f3f4f6'   // light text on dark background
+    : undefined;    // no color applied — use CSS defaults
+
+  // ── Content area style ────────────────────────────────────────────────────
+  // sticky: 8px amber strip + 36px header = 44px; others: 36px header only
+  // When height is fixed (localH > 0): absolute positioning fills the space below
+  // the header using left:0 right:0 bottom:0 — right:0 resolves to the right edge
+  // of the root div's explicit width (localW), so widening the block is instant.
+  // When height is auto (localH === 0): relative positioning grows with content.
+  const headerHeight = isSticky ? 44 : 36;
+  const contentStyle: React.CSSProperties = localH > 0
+    ? { position: 'absolute', top: headerHeight, left: 0,
+        right: 0, bottom: 0, overflowY: 'auto', padding: '0.75rem' }
+    : { position: 'relative', overflowY: 'auto', padding: '0.75rem', minHeight: '3rem' };
 
   // ── Render ───────────────────────────────────────────────────────────────
   return (
@@ -308,24 +345,28 @@ export function CanvasBlock({
         width:    localW,
         height:   localH > 0 ? localH : undefined,
         zIndex:   block.canvas_z ?? 0,
+        // position:absolute already creates a containing block for children,
+        // but we also set it so the content area's right:0 resolves to localW.
         // localColor overrides default background; sticky keeps its amber border
         ...(localColor ? { backgroundColor: localColor } : {}),
         ...(isSticky ? { borderColor: '#92400e' } : {}),
+        boxShadow: isSelected ? '0 0 0 2px #7c3aed, 0 0 16px #7c3aed44' : undefined,
+        animation: isSelected
+          ? 'blockAppear 0.25s ease-out forwards, glowPulse 2s ease-in-out infinite'
+          : 'blockAppear 0.25s ease-out forwards',
       }}
       className={[
-        'rounded-xl border shadow-md flex flex-col',
+        'rounded-xl border shadow-md',
         'min-w-50 min-h-20',
         isSticky
           ? 'bg-amber-50 dark:bg-amber-900/40'
           : 'bg-white dark:bg-neutral-900 border-neutral-200 dark:border-neutral-800',
-        isSelected && !isSticky ? 'border-violet-500 shadow-violet-500/20 shadow-lg' : '',
-        isSelected && isSticky  ? 'shadow-yellow-500/20 shadow-lg' : '',
       ].join(' ')}
       onClick={(e) => { e.stopPropagation(); onSelect(); }}
     >
       {/* ── Amber top strip for sticky cards ───────────────────────────── */}
       {isSticky && (
-        <div className="h-2 rounded-t-xl shrink-0" style={{ background: '#92400e' }} />
+        <div className="h-2 rounded-t-xl" style={{ background: '#92400e' }} />
       )}
 
       {/* ── Drag handle header ─────────────────────────────────────────── */}
@@ -335,6 +376,7 @@ export function CanvasBlock({
           'border-b cursor-grab active:cursor-grabbing',
           isSticky ? 'border-yellow-700/30' : 'border-neutral-200 dark:border-neutral-800',
         ].join(' ')}
+        style={{ backdropFilter: 'blur(4px)' }}
         onPointerDown={startDrag}
         onPointerMove={onDragMove}
         onPointerUp={onDragUp}
@@ -343,6 +385,7 @@ export function CanvasBlock({
 
         {/* ── Color picker button ─────────────────────────────────────── */}
         <button
+          ref={colorBtnRef}
           type="button"
           className={[
             'w-3 h-3 rounded-full shrink-0',
@@ -351,15 +394,26 @@ export function CanvasBlock({
               : 'border border-neutral-300 dark:border-neutral-600 bg-white dark:bg-neutral-900',
           ].join(' ')}
           style={localColor ? { background: localColor } : undefined}
-          onClick={(e) => { e.stopPropagation(); setColorPickerOpen(v => !v); }}
+          onClick={(e) => {
+            e.stopPropagation();
+            const rect = colorBtnRef.current?.getBoundingClientRect() ?? null;
+            setPickerRect(rect);
+            setColorPickerOpen(v => !v);
+          }}
           onPointerDown={(e) => e.stopPropagation()}
           title="Block color"
         />
 
-        {/* ── Color swatch popup ──────────────────────────────────────── */}
-        {colorPickerOpen && (
+        {/* ── Color swatch popup — portaled to document.body ──────────── */}
+        {mounted && colorPickerOpen && pickerRect && createPortal(
           <div
-            className="absolute top-full left-0 mt-0.5 z-50 bg-white dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700 rounded-lg p-2 flex flex-wrap gap-1.5 w-36 shadow-lg"
+            style={{
+              position: 'fixed',
+              top:      pickerRect.bottom + 4,
+              left:     pickerRect.left,
+              zIndex:   99999,
+            }}
+            className="bg-white dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700 rounded-lg p-2 flex flex-wrap gap-1.5 w-44 shadow-lg"
             onClick={(e) => e.stopPropagation()}
             onPointerDown={(e) => e.stopPropagation()}
           >
@@ -379,46 +433,72 @@ export function CanvasBlock({
                 onClick={() => handleColorSelect(color)}
               />
             ))}
-          </div>
+          </div>,
+          document.body,
         )}
 
-        {/* ── Block type label ────────────────────────────────────────── */}
+        {/* ── Block type label — white text on dark pill, always readable ─ */}
         {isSticky ? (
-          <span className="text-xs truncate" style={{ color: '#fef3c7' }}>
+          <span
+            style={{
+              color:           'white',
+              backgroundColor: 'rgba(0,0,0,0.35)',
+              borderRadius:    '4px',
+              padding:         '1px 6px',
+            }}
+            className="text-xs"
+          >
             ● Sticky
           </span>
         ) : block.block_type === 'rich' ? (
-          <span className="text-xs text-violet-500 truncate">≡ Rich</span>
+          <span
+            style={{
+              color:           'white',
+              backgroundColor: 'rgba(0,0,0,0.35)',
+              borderRadius:    '4px',
+              padding:         '1px 6px',
+            }}
+            className="text-xs"
+          >
+            ≡ Rich
+          </span>
         ) : (
-          <span className={[
-            'text-xs truncate',
-            textOnColor ? 'text-neutral-600' : 'text-neutral-600 dark:text-neutral-400',
-          ].join(' ')}>≡ Text</span>
+          <span
+            style={{
+              color:           'white',
+              backgroundColor: 'rgba(0,0,0,0.35)',
+              borderRadius:    '4px',
+              padding:         '1px 6px',
+            }}
+            className="text-xs"
+          >
+            ≡ Text
+          </span>
         )}
       </div>
 
-      {/* ── Content area ───────────────────────────────────────────────── */}
-      <div className={[
-        'flex-1 overflow-y-auto p-3',
-        textOnColor ? 'text-neutral-800' : 'text-neutral-800 dark:text-neutral-200',
-      ].join(' ')}>
+      {/* ── Content area ────────────────────────────────────────────────── */}
+      {/* Absolute when block has fixed height (fills below header perfectly). */}
+      {/* Normal flow when height is auto (block grows with content).          */}
+      {/* dynamicTextColor set here cascades to all child content.             */}
+      <div
+        style={{ ...contentStyle, color: dynamicTextColor }}
+        className={dynamicTextColor ? '' : 'text-neutral-800 dark:text-neutral-200'}
+      >
         {(block.block_type === 'text' || block.block_type === 'sticky') && (
-          <TextContent block={block} onContentSave={onContentSave} textColor={textColor} />
+          <TextContent block={block} onContentSave={onContentSave} />
         )}
         {block.block_type === 'heading1' && (
-          <HeadingContent block={block} textColor={textColor} />
+          <HeadingContent block={block} />
         )}
         {block.block_type === 'image' && (
           <ImageContent block={block} />
         )}
         {block.block_type === 'rich' && (
-          <RichPreviewContent block={block} onEditStart={onEditStart} textColor={textColor} />
+          <RichPreviewContent block={block} onEditStart={onEditStart} />
         )}
         {!['text', 'sticky', 'heading1', 'image', 'rich'].includes(block.block_type) && (
-          <PlaceholderContent
-            blockType={block.block_type}
-            textColor={textColor}
-          />
+          <PlaceholderContent blockType={block.block_type} />
         )}
       </div>
 
@@ -482,6 +562,7 @@ export function CanvasBlock({
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // CONTENT SUB-COMPONENTS
 // Each is its own component so hooks are not called conditionally.
+// Text color is NOT passed as a prop — it cascades from the parent content div.
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 // ── TextContent — mini TipTap editor (text + sticky) ─────────────────────────
@@ -489,10 +570,9 @@ export function CanvasBlock({
 interface TextContentProps {
   block:         Block;
   onContentSave: (blockId: string, json: Record<string, unknown>) => void;
-  textColor?:    string;
 }
 
-function TextContent({ block, onContentSave, textColor }: TextContentProps) {
+function TextContent({ block, onContentSave }: TextContentProps) {
   const autosaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const editor = useEditor({
@@ -520,8 +600,7 @@ function TextContent({ block, onContentSave, textColor }: TextContentProps) {
 
   return (
     <div
-      className="canvas-mini-editor text-sm text-neutral-800 dark:text-neutral-200 [&_.ProseMirror]:outline-none [&_.ProseMirror]:min-h-8"
-      style={{ color: textColor }}
+      className="canvas-mini-editor text-sm [&_.ProseMirror]:outline-none [&_.ProseMirror]:min-h-8"
       onPointerDown={(e) => e.stopPropagation()}
       onClick={(e) => e.stopPropagation()}
     >
@@ -532,10 +611,10 @@ function TextContent({ block, onContentSave, textColor }: TextContentProps) {
 
 // ── HeadingContent — static heading extracted from TipTap JSON ───────────────
 
-function HeadingContent({ block, textColor }: { block: Block; textColor?: string }) {
+function HeadingContent({ block }: { block: Block }) {
   const text = extractTipTapText(block.content?.json ?? {}) || 'Heading';
   return (
-    <h2 style={{ color: textColor }} className="text-xl font-bold text-neutral-900 dark:text-neutral-100 leading-snug wrap-break-word">
+    <h2 className="text-xl font-bold leading-snug wrap-break-word">
       {text}
     </h2>
   );
@@ -547,7 +626,7 @@ function ImageContent({ block }: { block: Block }) {
   const src = block.content?.src as string | undefined;
   if (!src) {
     return (
-      <p className="text-xs text-neutral-400 dark:text-neutral-600 italic">No image source</p>
+      <p className="text-xs italic opacity-60">No image source</p>
     );
   }
   return (
@@ -562,13 +641,11 @@ function ImageContent({ block }: { block: Block }) {
 
 // ── PlaceholderContent — unsupported block type ───────────────────────────────
 
-function PlaceholderContent({ blockType, textColor }: { blockType: string; textColor?: string }) {
+function PlaceholderContent({ blockType }: { blockType: string }) {
   return (
-    <div className="p-3" style={{ color: textColor }}>
-      <p className="text-xs italic text-neutral-500 dark:text-neutral-600">
-        [{blockType.replace('_', ' ')} — switch to document mode to edit]
-      </p>
-    </div>
+    <p className="text-xs italic opacity-60">
+      [{blockType.replace('_', ' ')} — switch to document mode to edit]
+    </p>
   );
 }
 
@@ -577,11 +654,9 @@ function PlaceholderContent({ blockType, textColor }: { blockType: string; textC
 function RichPreviewContent({
   block,
   onEditStart,
-  textColor,
 }: {
   block: Block;
   onEditStart?: () => void;
-  textColor?: string;
 }) {
   const json = block.content?.json as Record<string, unknown> | undefined;
   const nodes = Array.isArray((json as Record<string, unknown>)?.content)
@@ -620,26 +695,26 @@ function RichPreviewContent({
         );
       case 'codeBlock':
         return (
-          <pre key={idx} className="text-[10px] bg-neutral-100 dark:bg-neutral-800 rounded px-2 py-1 font-mono text-green-700 dark:text-green-400 overflow-hidden">
+          <pre key={idx} className="text-[10px] bg-black/10 rounded px-2 py-1 font-mono overflow-hidden">
             {text.slice(0, 60)}{text.length > 60 ? '…' : ''}
           </pre>
         );
       case 'paragraph':
-        return text ? <p key={idx} className="text-xs text-neutral-700 dark:text-neutral-300">{text}</p> : null;
+        return text ? <p key={idx} className="text-xs">{text}</p> : null;
       default:
-        return text ? <p key={idx} className="text-xs text-neutral-500 dark:text-neutral-400">{text}</p> : null;
+        return text ? <p key={idx} className="text-xs opacity-70">{text}</p> : null;
     }
   }
 
   return (
     <div
-      className="cursor-pointer select-none space-y-1 overflow-hidden max-h-32"
-      style={{ color: textColor }}
+      className="cursor-pointer select-none space-y-1 overflow-y-auto"
+      style={{ maxHeight: '100%' }}
       onDoubleClick={(e) => { e.stopPropagation(); onEditStart?.(); }}
     >
       {nodes.length > 0
         ? nodes.slice(0, 6).map((n, i) => renderNode(n, i))
-        : <p className="italic text-neutral-400 dark:text-neutral-600 text-xs">Double-click to edit…</p>
+        : <p className="italic text-xs opacity-50">Double-click to edit…</p>
       }
     </div>
   );
