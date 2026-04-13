@@ -9,17 +9,19 @@ from .views import (
     BlockDuplicateView,
     BlockMoveView,
     BlockTypesView,
+    MakeColumnsView,
 )
 
 urlpatterns = [
     # ── Collection endpoints ──────────────────────────────────────────────────
-    path('',          BlockListCreateView.as_view(), name='block-list-create'),
-    path('types/',    BlockTypesView.as_view(),      name='block-types'),
-    path('reorder/',  BlockReorderView.as_view(),    name='block-reorder'),
+    path('',              BlockListCreateView.as_view(), name='block-list-create'),
+    path('types/',        BlockTypesView.as_view(),      name='block-types'),
+    path('reorder/',      BlockReorderView.as_view(),    name='block-reorder'),
+    path('make-columns/', MakeColumnsView.as_view(),     name='block-make-columns'),
 
     # ── Single-block endpoints ────────────────────────────────────────────────
-    path('<uuid:pk>/',            BlockDetailView.as_view(),   name='block-detail'),
-    path('<uuid:pk>/tree/',       BlockTreeView.as_view(),     name='block-tree'),
+    path('<uuid:pk>/',            BlockDetailView.as_view(),    name='block-detail'),
+    path('<uuid:pk>/tree/',       BlockTreeView.as_view(),      name='block-tree'),
     path('<uuid:pk>/duplicate/',  BlockDuplicateView.as_view(), name='block-duplicate'),
-    path('<uuid:pk>/move/',       BlockMoveView.as_view(),     name='block-move'),
+    path('<uuid:pk>/move/',       BlockMoveView.as_view(),      name='block-move'),
 ]

@@ -227,3 +227,27 @@ export function useReorderDocBlocks(pageId: string) {
     },
   });
 }
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// MAKE COLUMNS
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+/**
+ * useMakeColumns — converts two top-level blocks into a column layout.
+ *
+ * Calls POST /api/blocks/make-columns/ which creates a column_container
+ * with two column children and moves source + target into them.
+ * Invalidates the page's block list so the new structure renders immediately.
+ */
+export function useMakeColumns(pageId: string) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ sourceId, targetId }: { sourceId: string; targetId: string }) =>
+      blockApi.makeColumns(sourceId, targetId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: docBlockKeys.all(pageId) });
+      queryClient.invalidateQueries({ queryKey: ['blocks', pageId] });
+    },
+  });
+}

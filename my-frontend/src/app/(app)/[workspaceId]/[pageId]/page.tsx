@@ -968,6 +968,7 @@ export default function PageEditorRoute() {
             {/* DocumentEditor — per-block editing (Phase 2+) */}
             <DocumentEditor
               blocks={docBlocks}
+              pageId={pageId}
               readOnly={page.is_locked}
               onCreateBlock={handleCreateBlock}
               onUpdateBlock={handleUpdateBlock}

@@ -548,6 +548,19 @@ export const blockApi = {
     const { data } = await axiosInstance.get<BlockTypeInfo[]>('/api/blocks/types/');
     return data;
   },
+
+  /**
+   * POST /api/blocks/make-columns/ — convert two top-level blocks into a column layout.
+   * Creates a column_container with two column children; moves both source and target
+   * blocks into those columns. Returns the new column_container block.
+   */
+  makeColumns: async (sourceBlockId: string, targetBlockId: string): Promise<Block> => {
+    const { data } = await axiosInstance.post<Block>('/api/blocks/make-columns/', {
+      source_block_id: sourceBlockId,
+      target_block_id: targetBlockId,
+    });
+    return data;
+  },
 };
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -26,9 +26,16 @@
  *   SlashCommand extension emits on slashEventBus; DocumentEditor listens and
  *   renders the SlashMenuPortal overlay. Same pattern as TextBlock.
  *
- * focusAtEnd prop:
- *   When true (set by DocumentEditor after Backspace-delete on next block),
- *   the editor focuses at the end of its content. Cleared by parent on focus.
+ * onTextChange:
+ *   Called immediately (no debounce) on every editor update so DocumentEditor
+ *   can track the current clean text. Used by handleSlashSelect to pass the
+ *   post-deletion text as part of the block_type update — preventing the '/'
+ *   trigger from persisting in the cache when the debounce hasn't flushed yet.
+ *
+ * focusAtEnd / autoFocus — retry pattern:
+ *   Both use a 50ms-interval retry loop (up to 10 attempts) instead of a single
+ *   fixed-delay setTimeout. TipTap initialises asynchronously; the retry ensures
+ *   focus lands even if the editor isn't ready on the first attempt.
  *
  * Drag fix:
  *   onDrop on EditorContent stops propagation so TipTap does not receive the
@@ -61,6 +68,7 @@ interface ListBlockProps {
   onConvertToParagraph:   () => void;  // first Backspace on empty: convert type
   onFocus:                () => void;
   onBlur:                 () => void;
+  onTextChange?:          (text: string) => void;  // immediate (no debounce) text update
   autoFocus?:             boolean;
   focusAtEnd?:            boolean;     // focus at end (after next block deleted via Backspace)
   readOnly?:              boolean;
@@ -79,6 +87,7 @@ export function ListBlock({
   onConvertToParagraph,
   onFocus,
   onBlur,
+  onTextChange,
   autoFocus  = false,
   focusAtEnd = false,
   readOnly   = false,
@@ -87,16 +96,18 @@ export function ListBlock({
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Keep stable refs for callbacks so the keyboard extension closure never stales
-  const onSaveRef                = useRef(onSave);
-  const onEnterRef               = useRef(onEnter);
-  const onDeleteRef              = useRef(onDelete);
-  const onConvertToParagraphRef  = useRef(onConvertToParagraph);
-  const onFocusRef               = useRef(onFocus);
+  const onSaveRef               = useRef(onSave);
+  const onEnterRef              = useRef(onEnter);
+  const onDeleteRef             = useRef(onDelete);
+  const onConvertToParagraphRef = useRef(onConvertToParagraph);
+  const onFocusRef              = useRef(onFocus);
+  const onTextChangeRef         = useRef(onTextChange);
   useEffect(() => { onSaveRef.current               = onSave;               }, [onSave]);
   useEffect(() => { onEnterRef.current              = onEnter;              }, [onEnter]);
   useEffect(() => { onDeleteRef.current             = onDelete;             }, [onDelete]);
   useEffect(() => { onConvertToParagraphRef.current = onConvertToParagraph; }, [onConvertToParagraph]);
   useEffect(() => { onFocusRef.current              = onFocus;              }, [onFocus]);
+  useEffect(() => { onTextChangeRef.current         = onTextChange;         }, [onTextChange]);
 
   // Use a ref for isChecked so the onUpdate closure never goes stale
   const isCheckedRef = useRef<boolean>(Boolean(block.content.checked));
@@ -176,10 +187,15 @@ export function ListBlock({
     content:  String(block.content.text ?? ''),
     editable: !readOnly,
     onUpdate: ({ editor: e }) => {
+      const text = e.getText();
+      // Notify DocumentEditor immediately (no debounce) so it always has the
+      // latest clean text — critical for slash command block-type conversion.
+      onTextChangeRef.current?.(text);
+      // Debounced save
       if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
       saveTimerRef.current = setTimeout(() => {
         onSaveRef.current({
-          text:    e.getText(),
+          text,
           checked: isCheckedRef.current,
           marks:   [],
         });
@@ -190,14 +206,30 @@ export function ListBlock({
   });
 
   // ── Auto-focus on mount ───────────────────────────────────────────────────
-  // Fires whenever autoFocus prop changes (e.g. after Enter creates new block).
+  // Retry pattern: the editor may not be initialised (isEditable) when this
+  // first fires. Poll every 50ms up to 10 times so focus always lands.
   useEffect(() => {
-    if (autoFocus && editor) {
-      const t = setTimeout(() => editor.commands.focus('end'), 50);
-      return () => clearTimeout(t);
+    if (!autoFocus) return;
+    let attempts = 0;
+    const maxAttempts = 10;
+    let timerId: ReturnType<typeof setTimeout>;
+
+    function tryFocus() {
+      attempts++;
+      if (editor && editor.isEditable) {
+        editor.commands.focus('end');
+        return;
+      }
+      if (attempts < maxAttempts) {
+        timerId = setTimeout(tryFocus, 50);
+      }
     }
+
+    timerId = setTimeout(tryFocus, 50);
+    return () => clearTimeout(timerId);
+  // editor intentionally included so a late-init editor triggers a retry
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [autoFocus]);
+  }, [autoFocus, editor]);
 
   // ── Focus at end when next block is deleted ───────────────────────────────
   // Uses the same retry pattern as TextBlock: poll every 50ms up to 10 times

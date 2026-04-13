@@ -384,3 +384,109 @@ class BlockMoveView(APIView):
 
         block.save()
         return Response(BlockSerializer(block).data)
+
+
+class MakeColumnsView(APIView):
+    """
+    POST /api/blocks/make-columns/
+
+    Converts two existing top-level blocks into a side-by-side column layout:
+
+      1. Creates a column_container block at the target block's position.
+      2. Creates two column child blocks inside the container.
+      3. Moves target_block into column 1 (left).
+      4. Moves source_block into column 2 (right).
+
+    Both original blocks keep their content unchanged — only their
+    parent and order fields are updated.
+
+    Ownership: both blocks must belong to the same page and workspace.
+    Returns: the serialised column_container block (201 Created).
+
+    Body: { "source_block_id": "<uuid>", "target_block_id": "<uuid>" }
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        source_id = request.data.get('source_block_id')
+        target_id = request.data.get('target_block_id')
+
+        if not source_id or not target_id:
+            return Response(
+                {'error': 'source_block_id and target_block_id are required.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if source_id == target_id:
+            return Response(
+                {'error': 'source_block_id and target_block_id must be different.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Ownership enforced via 404 — never leaks existence of other users' blocks
+        source = get_object_or_404(
+            Block,
+            pk=source_id,
+            is_deleted=False,
+            page__workspace__owner=request.user,
+        )
+        target = get_object_or_404(
+            Block,
+            pk=target_id,
+            is_deleted=False,
+            page__workspace__owner=request.user,
+        )
+
+        if source.page_id != target.page_id:
+            return Response(
+                {'error': 'Both blocks must be on the same page.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        with transaction.atomic():
+            # ── 1. Create column_container at the target's current position ──
+            container = Block.objects.create(
+                page=target.page,
+                parent=target.parent,    # inherit target's parent (usually null)
+                block_type='column_container',
+                content={'widths': [50, 50]},
+                order=target.order,
+                doc_visible=True,
+                canvas_visible=False,
+            )
+
+            # ── 2. Create two column children ─────────────────────────────────
+            col1 = Block.objects.create(
+                page=target.page,
+                parent=container,
+                block_type='column',
+                content={},
+                order=1.0,
+                doc_visible=True,
+                canvas_visible=False,
+            )
+            col2 = Block.objects.create(
+                page=target.page,
+                parent=container,
+                block_type='column',
+                content={},
+                order=2.0,
+                doc_visible=True,
+                canvas_visible=False,
+            )
+
+            # ── 3. Move target → column 1 ─────────────────────────────────────
+            target.parent = col1
+            target.order  = 1.0
+            target.save(update_fields=['parent', 'order'])
+
+            # ── 4. Move source → column 2 ─────────────────────────────────────
+            source.parent = col2
+            source.order  = 1.0
+            source.save(update_fields=['parent', 'order'])
+
+        return Response(
+            BlockSerializer(container).data,
+            status=status.HTTP_201_CREATED,
+        )
