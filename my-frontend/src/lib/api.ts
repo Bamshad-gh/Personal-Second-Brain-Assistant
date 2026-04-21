@@ -362,6 +362,20 @@ export const workspaceApi = {
     );
     return data;
   },
+
+  /**
+   * GET /api/workspaces/:id/context/
+   * Returns concatenated plain text from all workspace pages (≤ 8 000 chars).
+   * Used as global AI assistant context.
+   */
+  getContext: async (id: string): Promise<{
+    context:    string;
+    page_count: number;
+    char_count: number;
+  }> => {
+    const { data } = await axiosInstance.get(`/api/workspaces/${id}/context/`);
+    return data;
+  },
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -561,6 +575,54 @@ export const blockApi = {
     });
     return data;
   },
+
+  /**
+   * POST /api/blocks/add-to-column/ — add a top-level block as a new column
+   * in an existing column_container, creating (1,2,3) instead of nesting ((1,2),3).
+   */
+  addToColumn: async (sourceBlockId: string, containerBlockId: string): Promise<Block> => {
+    const { data } = await axiosInstance.post<Block>('/api/blocks/add-to-column/', {
+      source_block_id:    sourceBlockId,
+      container_block_id: containerBlockId,
+    });
+    return data;
+  },
+
+  /**
+   * Atomically collapses an empty column from its container.
+   * The backend handles all cases (0 / 1 / 2+ remaining columns) in one
+   * transaction, preventing the race condition that occurs when the
+   * frontend does sequential update → delete mutations.
+   */
+  collapseColumn: async (columnId: string): Promise<void> => {
+    await axiosInstance.post('/api/blocks/collapse-column/', { column_id: columnId });
+  },
+
+  /**
+   * uploadFile — POST /api/blocks/upload/
+   *
+   * Uploads a file to the server using multipart/form-data.
+   * Returns the permanent URL, original filename, size in bytes, and MIME type.
+   * Max file size: 10 MB. Allowed: image/*, application/pdf, video/*.
+   */
+  uploadFile: async (file: File): Promise<{
+    url:      string;
+    filename: string;
+    size:     number;
+    mimetype: string;
+  }> => {
+    const formData = new FormData();
+    formData.append('file', file);
+    const { data } = await axiosInstance.post<{
+      url:      string;
+      filename: string;
+      size:     number;
+      mimetype: string;
+    }>('/api/blocks/upload/', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+    return data;
+  },
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -653,6 +715,61 @@ export const aiApi = {
    */
   clearChatHistory: async (pageId: string): Promise<void> => {
     await axiosInstance.delete(`/api/ai/chat/history/?page=${pageId}`);
+  },
+
+  /**
+   * POST /api/ai/agent-chat/
+   * Structured agent chat — AI returns JSON with type='message'|'action'.
+   * Caller is responsible for parsing the returned `type` and showing confirmation.
+   */
+  agentChat: async (payload: {
+    messages: AiChatMessage[];
+    page_id?: string;
+    context?: string;
+  }): Promise<{
+    type:    string;
+    message: string;
+    action?: string;
+    params?: Record<string, unknown>;
+    data?:   Record<string, unknown>;
+  }> => {
+    const { data } = await axiosInstance.post('/api/ai/agent-chat/', payload);
+    return data;
+  },
+
+  /**
+   * POST /api/ai/execute/create-page/
+   * Atomically creates a page + its initial blocks.
+   * workspace_id must be the UUID of the target workspace.
+   */
+  executeCreatePage: async (payload: {
+    workspace_id: string;
+    title:        string;
+    blocks?:      { block_type: string; content: Record<string, unknown> }[];
+  }): Promise<Page> => {
+    const { data } = await axiosInstance.post<Page>('/api/ai/execute/create-page/', payload);
+    return data;
+  },
+
+  /**
+   * Add blocks to an existing page — parallel individual block POSTs.
+   * Uses blockApi.create() internally so all block logic stays consistent.
+   */
+  executeAddBlocks: async (
+    pageId:  string,
+    blocks:  { block_type: string; content: Record<string, unknown> }[],
+  ): Promise<Block[]> => {
+    const results = await Promise.all(
+      blocks.map((b, i) =>
+        axiosInstance.post<Block>('/api/blocks/', {
+          page:       pageId,
+          block_type: b.block_type,
+          content:    b.content,
+          order:      i + 1,
+        }).then(r => r.data),
+      ),
+    );
+    return results;
   },
 };
 
@@ -937,4 +1054,94 @@ export const graphApi = {
     );
     return data;
   },
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ADMIN API — staff-only dashboard statistics
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * adminApi — read-only statistics for the /admin dashboard.
+ *
+ * All endpoints require is_staff=True on the backend (IsAdminUser permission).
+ * Non-staff requests receive 403 Forbidden — the frontend also redirects away,
+ * but the backend is the authoritative gate.
+ *
+ * WHERE THIS IS CALLED:
+ *   src/app/(admin)/admin/page.tsx → AdminDashboard component
+ */
+
+export interface AdminOverview {
+  users:   { total: number; new_30d: number; active_7d: number };
+  content: { pages: number; blocks: number; workspaces: number };
+  ai:      { calls_today: number; tokens_today: number };
+  tiers:   Record<string, number>;
+}
+
+export interface AdminUserRow {
+  id:              string;
+  email:           string;
+  username:        string;
+  date_joined:     string;
+  last_login:      string | null;
+  is_staff:        boolean;
+  is_active:       boolean;
+  workspace_count: number;
+  page_count:      number;
+  ai_tier:         string;
+  ai_calls_today:  number;
+}
+
+export interface AdminUserPage {
+  total:   number;
+  page:    number;
+  pages:   number;
+  results: AdminUserRow[];
+}
+
+export interface AdminAiActionRow {
+  action_name:   string;
+  count:         number;
+  input_tokens:  number;
+  output_tokens: number;
+}
+
+export interface AdminDailyRow {
+  date:   string;
+  calls:  number;
+  tokens: number;
+}
+
+export interface AdminTopUserRow {
+  user__email: string;
+  calls:       number;
+  tokens:      number;
+}
+
+export interface AdminAiStats {
+  by_action: AdminAiActionRow[];
+  daily:     AdminDailyRow[];
+  top_users: AdminTopUserRow[];
+}
+
+export interface AdminSecurity {
+  new_staff_accounts: { email: string; date_joined: string }[];
+  unlimited_ai_users: { user__email: string; updated_at: string }[];
+  never_logged_in:    number;
+}
+
+export const adminApi = {
+  getOverview: (): Promise<AdminOverview> =>
+    axiosInstance.get('/api/admin/overview/').then((r) => r.data),
+
+  getUsers: (page = 1, search = ''): Promise<AdminUserPage> =>
+    axiosInstance
+      .get(`/api/admin/users/?page=${page}&search=${encodeURIComponent(search)}`)
+      .then((r) => r.data),
+
+  getAiStats: (): Promise<AdminAiStats> =>
+    axiosInstance.get('/api/admin/ai-stats/').then((r) => r.data),
+
+  getSecurity: (): Promise<AdminSecurity> =>
+    axiosInstance.get('/api/admin/security/').then((r) => r.data),
 };

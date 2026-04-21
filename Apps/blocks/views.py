@@ -4,9 +4,15 @@ from rest_framework import status, generics
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.parsers import MultiPartParser, FormParser
 from django.shortcuts import get_object_or_404
 from django.db import transaction
 from django.db.models import Max
+from django.core.files.storage import default_storage
+from django.core.files.base import ContentFile
+from django.conf import settings
+from datetime import date
+import os
 import uuid as uuid_lib
 
 from .models import Block, BLOCK_TYPE_REGISTRY
@@ -490,3 +496,258 @@ class MakeColumnsView(APIView):
             BlockSerializer(container).data,
             status=status.HTTP_201_CREATED,
         )
+
+
+class AddToColumnView(APIView):
+    """
+    POST /api/blocks/add-to-column/
+
+    Adds a top-level block as a new column in an existing column_container,
+    creating a (1, 2, 3) layout instead of nesting ((1, 2), 3).
+
+    Steps (atomic):
+      1. Validate container is a column_container and source is top-level.
+      2. Find the last column child — new column order = last.order + 1.0.
+      3. Create a new column block inside the container.
+      4. Move source block into the new column.
+      5. Redistribute widths equally (100 / N) and save container.
+
+    Body:    { "source_block_id": "<uuid>", "container_block_id": "<uuid>" }
+    Returns: serialised column_container block (201 Created).
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        source_id    = request.data.get('source_block_id')
+        container_id = request.data.get('container_block_id')
+
+        if not source_id or not container_id:
+            return Response(
+                {'error': 'source_block_id and container_block_id are required.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        source = get_object_or_404(
+            Block, pk=source_id, is_deleted=False,
+            page__workspace__owner=request.user,
+        )
+        container = get_object_or_404(
+            Block, pk=container_id, is_deleted=False,
+            page__workspace__owner=request.user,
+        )
+
+        if container.block_type != 'column_container':
+            return Response(
+                {'error': 'container_block_id must be a column_container block.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if source.parent_id is not None:
+            return Response(
+                {'error': 'source_block_id must be a top-level block (no parent).'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if source.page_id != container.page_id:
+            return Response(
+                {'error': 'Both blocks must be on the same page.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        with transaction.atomic():
+            # ── Existing columns sorted by order ──────────────────────────────
+            existing_cols = list(
+                Block.objects.filter(
+                    parent=container, block_type='column', is_deleted=False
+                ).order_by('order')
+            )
+            new_col_order = (existing_cols[-1].order + 1.0) if existing_cols else 1.0
+            n_cols        = len(existing_cols) + 1  # including the new one
+
+            # ── Create new column ─────────────────────────────────────────────
+            new_col = Block.objects.create(
+                page=container.page,
+                parent=container,
+                block_type='column',
+                content={},
+                order=new_col_order,
+                doc_visible=True,
+                canvas_visible=False,
+            )
+
+            # ── Move source into new column ───────────────────────────────────
+            source.parent = new_col
+            source.order  = 1.0
+            source.save(update_fields=['parent', 'order'])
+
+            # ── Redistribute widths equally ───────────────────────────────────
+            equal_width = round(100 / n_cols, 4)
+            container.content = {**container.content, 'widths': [equal_width] * n_cols}
+            container.save(update_fields=['content'])
+
+        return Response(
+            BlockSerializer(container).data,
+            status=status.HTTP_201_CREATED,
+        )
+
+
+class FileUploadView(APIView):
+    """
+    POST /api/blocks/upload/
+
+    Accepts a multipart file upload. Saves to MEDIA_ROOT/uploads/YYYY/MM/.
+    Returns { url, filename, size, mimetype }.
+
+    Restrictions:
+      - Auth required
+      - Max file size: 10 MB
+      - Allowed MIME types: image/*, application/pdf, video/*
+    """
+
+    permission_classes = [IsAuthenticated]
+    parser_classes     = [MultiPartParser, FormParser]
+
+    MAX_SIZE = 10 * 1024 * 1024  # 10 MB
+
+    ALLOWED_TYPES = {
+        'image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/svg+xml',
+        'application/pdf',
+        'video/mp4', 'video/webm', 'video/ogg',
+    }
+
+    def post(self, request):
+        file = request.FILES.get('file')
+        if not file:
+            return Response(
+                {'error': 'No file provided.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if file.size > self.MAX_SIZE:
+            return Response(
+                {'error': 'File too large. Max size is 10 MB.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if file.content_type not in self.ALLOWED_TYPES:
+            return Response(
+                {'error': f'File type {file.content_type!r} is not allowed.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Build storage path: uploads/YYYY/MM/<uuid><ext>
+        today    = date.today()
+        ext      = os.path.splitext(file.name)[1].lower()
+        filename = f'{uuid_lib.uuid4().hex}{ext}'
+        path     = f'uploads/{today.year}/{today.month:02d}/{filename}'
+
+        saved_path = default_storage.save(path, ContentFile(file.read()))
+        url        = request.build_absolute_uri(settings.MEDIA_URL + saved_path)
+
+        return Response(
+            {
+                'url':      url,
+                'filename': file.name,
+                'size':     file.size,
+                'mimetype': file.content_type,
+            },
+            status=status.HTTP_201_CREATED,
+        )
+
+
+class CollapseColumnView(APIView):
+    """
+    POST /api/blocks/collapse-column/
+
+    Atomically removes an empty column from its container, then dissolves
+    the container if only one (or zero) columns remain.
+
+      0 cols remain → soft-delete container
+      1 col remains → move its content blocks to top-level (container's
+                       parent / order position), soft-delete col + container
+      2+ cols remain → soft-delete column, redistribute widths equally
+
+    This is done in a single DB transaction so the frontend never sees an
+    intermediate state where a content block is orphaned.
+
+    Ownership enforced via page__workspace__owner.
+    Body:   { "column_id": "<uuid>" }
+    Returns: 200 {}
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        column_id = request.data.get('column_id')
+        if not column_id:
+            return Response(
+                {'error': 'column_id is required.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        column = get_object_or_404(
+            Block,
+            pk=column_id,
+            block_type='column',
+            is_deleted=False,
+            page__workspace__owner=request.user,
+        )
+
+        container = column.parent
+        if not container or container.block_type != 'column_container':
+            return Response(
+                {'error': 'Column has no valid column_container parent.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        with transaction.atomic():
+            # Remaining columns (excluding the one we're collapsing)
+            remaining_cols = list(
+                Block.objects.filter(
+                    parent=container,
+                    block_type='column',
+                    is_deleted=False,
+                ).exclude(pk=column_id).order_by('order')
+            )
+
+            # Soft-delete the empty column
+            column.is_deleted = True
+            column.save(update_fields=['is_deleted'])
+
+            if len(remaining_cols) == 0:
+                # Container is now empty — delete it too
+                container.is_deleted = True
+                container.save(update_fields=['is_deleted'])
+
+            elif len(remaining_cols) == 1:
+                # One column left — dissolve: move its content to top-level
+                last_col    = remaining_cols[0]
+                base_order  = container.order
+                top_parent  = container.parent   # None for top-level
+
+                content_blocks = list(
+                    Block.objects.filter(
+                        parent=last_col,
+                        is_deleted=False,
+                    ).order_by('order')
+                )
+                for i, blk in enumerate(content_blocks):
+                    blk.parent = top_parent
+                    blk.order  = base_order + i * 0.1
+                    blk.save(update_fields=['parent', 'order'])
+
+                last_col.is_deleted  = True
+                container.is_deleted = True
+                last_col.save(update_fields=['is_deleted'])
+                container.save(update_fields=['is_deleted'])
+
+            else:
+                # 2+ columns remain — redistribute widths equally
+                equal_width = 100.0 / len(remaining_cols)
+                content = container.content or {}
+                content['widths'] = [equal_width] * len(remaining_cols)
+                container.content = content
+                container.save(update_fields=['content'])
+
+        return Response(status=status.HTTP_200_OK)

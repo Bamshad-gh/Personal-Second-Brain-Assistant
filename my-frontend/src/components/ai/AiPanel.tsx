@@ -65,8 +65,21 @@ const ACTION_EMOJI: Record<string, string> = {
 // Types
 // ─────────────────────────────────────────────────────────────────────────────
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Agent action shape returned by /api/ai/agent-chat/
+// ─────────────────────────────────────────────────────────────────────────────
+
+interface AgentResponse {
+  type:    'message' | 'action';
+  message: string;
+  action?: string;
+  params?: Record<string, unknown>;
+  data?:   Record<string, unknown>;
+}
+
 interface AiPanelProps {
   pageId:                  string;
+  workspaceId:             string;
   /** Full text from the editor — used as fallback when no text is selected */
   pageContent:             string;
   onClose:                 () => void;
@@ -78,6 +91,8 @@ interface AiPanelProps {
   pendingAction?:          { actionType: string; content: string } | null;
   /** Called after pendingAction has been consumed */
   onPendingActionHandled?: () => void;
+  /** Called when agent proposes create_mindmap — host switches to canvas mode */
+  onMindmapAction?:        (nodes: { label: string }[]) => void;
 }
 
 type Tab = 'actions' | 'chat';
@@ -88,12 +103,14 @@ type Tab = 'actions' | 'chat';
 
 export function AiPanel({
   pageId,
+  workspaceId,
   pageContent,
   onClose,
   selectedText,
   onInsertResult,
   pendingAction,
   onPendingActionHandled,
+  onMindmapAction,
 }: AiPanelProps) {
   const queryClient = useQueryClient();
 
@@ -111,10 +128,15 @@ export function AiPanel({
   const [languageInput,  setLanguageInput]  = useState('');
 
   // ── Chat state ─────────────────────────────────────────────────────────────
-  const [messages,   setMessages]   = useState<AiChatMessage[]>([]);
-  const [chatInput,  setChatInput]  = useState('');
-  const [isChatting, setIsChatting] = useState(false);
+  const [messages,     setMessages]     = useState<AiChatMessage[]>([]);
+  const [chatInput,    setChatInput]    = useState('');
+  const [isChatting,   setIsChatting]   = useState(false);
   const chatEndRef = useRef<HTMLDivElement>(null);
+
+  // ── Agent mode state ───────────────────────────────────────────────────────
+  const [agentMode,     setAgentMode]     = useState(false);
+  const [pendingAgent,  setPendingAgent]  = useState<AgentResponse | null>(null);
+  const [isExecuting,   setIsExecuting]   = useState(false);
 
   // Auto-scroll chat to bottom when new messages arrive
   useEffect(() => {
@@ -219,6 +241,54 @@ export function AiPanel({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pendingAction]);
 
+  // ── Execute an approved agent action ──────────────────────────────────────
+
+  async function handleExecuteAction() {
+    if (!pendingAgent || pendingAgent.type !== 'action') return;
+    setIsExecuting(true);
+
+    try {
+      const { action } = pendingAgent;
+      const params = (pendingAgent.params ?? pendingAgent.data ?? {}) as Record<string, unknown>;
+
+      if (action === 'create_page') {
+        const page = await aiApi.executeCreatePage({
+          workspace_id: workspaceId,
+          title:        String(params.title ?? 'New Page'),
+          blocks:       (params.blocks as { block_type: string; content: Record<string, unknown> }[]) ?? [],
+        });
+        queryClient.invalidateQueries({ queryKey: ['pages', workspaceId] });
+        const confirmMsg: AiChatMessage = {
+          role:    'assistant',
+          content: `✓ Page "${page.title}" created.`,
+        };
+        setMessages(prev => [...prev, confirmMsg]);
+
+      } else if (action === 'add_blocks') {
+        await aiApi.executeAddBlocks(
+          pageId,
+          (params.blocks as { block_type: string; content: Record<string, unknown> }[]) ?? [],
+        );
+        queryClient.invalidateQueries({ queryKey: ['blocks', pageId] });
+        setMessages(prev => [...prev, { role: 'assistant', content: '✓ Blocks added to page.' }]);
+
+      } else if (action === 'create_mindmap') {
+        const nodes = (params.nodes as { label: string }[]) ?? [];
+        onMindmapAction?.(nodes);
+        queryClient.invalidateQueries({ queryKey: ['blocks', pageId] });
+        setMessages(prev => [...prev, { role: 'assistant', content: '✓ Mind map created on canvas.' }]);
+
+      } else {
+        toast.error(`Unknown action: ${action}`);
+      }
+    } catch {
+      toast.error('Action failed. Please try again.');
+    } finally {
+      setPendingAgent(null);
+      setIsExecuting(false);
+    }
+  }
+
   // ── Chat send handler ──────────────────────────────────────────────────────
 
   async function sendMessage() {
@@ -232,12 +302,30 @@ export function AiPanel({
     setIsChatting(true);
 
     try {
-      const { reply } = await aiApi.chat({
-        messages: nextMessages,
-        page_id:  pageId,
-        context:  pageContent.slice(0, 2000),
-      });
-      setMessages([...nextMessages, { role: 'assistant', content: reply }]);
+      if (agentMode) {
+        const response = await aiApi.agentChat({
+          messages: nextMessages,
+          page_id:  pageId,
+          context:  pageContent.slice(0, 2000),
+        });
+        console.log('[Agent response]', response);
+        setMessages([...nextMessages, { role: 'assistant', content: response.message }]);
+        if (response.type === 'action') {
+          // auto-execute read_page since it's non-destructive
+          if (response.action === 'read_page') {
+            setMessages(prev => [...prev, { role: 'assistant', content: response.message }]);
+          } else {
+            setPendingAgent(response as AgentResponse);
+          }
+        }
+      } else {
+        const { reply } = await aiApi.chat({
+          messages: nextMessages,
+          page_id:  pageId,
+          context:  pageContent.slice(0, 2000),
+        });
+        setMessages([...nextMessages, { role: 'assistant', content: reply }]);
+      }
     } catch {
       toast.error('Chat request failed. Check your AI settings.');
       setMessages(messages);
@@ -265,8 +353,8 @@ export function AiPanel({
 
   return (
     <div
-      className="flex flex-col h-full border-l border-neutral-800 bg-neutral-900 animate-fade-in"
-      style={{ width: '320px', minWidth: '320px' }}
+      className="flex flex-col border-l border-neutral-800 bg-neutral-900 animate-fade-in overflow-hidden"
+      style={{ width: '320px', minWidth: '320px', height: '100%' }}
     >
       {/* ── Header ────────────────────────────────────────────────────────── */}
       <div className="flex items-center gap-2 border-b border-neutral-800 px-4 py-3">
@@ -320,7 +408,7 @@ export function AiPanel({
           )}
 
           {/* Action buttons */}
-          <div className="flex-1 overflow-y-auto p-3 space-y-1">
+          <div className="flex-1 overflow-y-auto overscroll-contain p-3 space-y-1">
 
             {/* Text Actions group */}
             {textActions.length > 0 && (
@@ -484,8 +572,27 @@ export function AiPanel({
       {/* ── Tab: Chat ─────────────────────────────────────────────────────── */}
       {tab === 'chat' && (
         <div className="flex flex-col flex-1 overflow-hidden">
+
+          {/* Agent mode toggle row */}
+          <div className="flex items-center justify-between px-3 pt-2 pb-1">
+            <span className="text-[10px] font-semibold uppercase tracking-wider text-neutral-600">
+              {agentMode ? 'Agent mode' : 'Chat mode'}
+            </span>
+            <button
+              onClick={() => { setAgentMode(m => !m); setPendingAgent(null); }}
+              className={[
+                'rounded-full px-2.5 py-0.5 text-[10px] font-semibold transition-colors',
+                agentMode
+                  ? 'bg-violet-600/30 text-violet-300 border border-violet-500/50'
+                  : 'bg-neutral-800 text-neutral-500 border border-neutral-700 hover:text-neutral-300',
+              ].join(' ')}
+            >
+              {agentMode ? '⚡ Agent ON' : 'Agent OFF'}
+            </button>
+          </div>
+
           {/* Messages */}
-          <div className="flex-1 overflow-y-auto min-h-0 p-3 space-y-3">
+          <div className="flex-1 overflow-y-auto overscroll-contain min-h-0 p-3 space-y-3">
             {messages.length === 0 && (
               <div className="flex flex-col items-center gap-3 pt-6 text-center">
                 <div
@@ -562,6 +669,35 @@ export function AiPanel({
               >
                 <Trash2 size={11} /> Clear history
               </button>
+            </div>
+          )}
+
+          {/* Agent action confirmation banner */}
+          {pendingAgent && pendingAgent.type === 'action' && (
+            <div className="mx-3 mb-2 rounded-xl border border-violet-600/40 bg-violet-900/20 p-3 text-xs space-y-2">
+              <p className="font-semibold text-violet-300 flex items-center gap-1.5">
+                <span>⚡</span>
+                Agent wants to: <span className="font-mono text-violet-200">{pendingAgent.action}</span>
+              </p>
+              <p className="text-neutral-400 leading-relaxed">
+                Approve to execute this action. This will modify your workspace.
+              </p>
+              <div className="flex gap-2 pt-1">
+                <button
+                  onClick={handleExecuteAction}
+                  disabled={isExecuting}
+                  className="flex-1 rounded-lg bg-violet-600 py-1.5 text-xs font-semibold text-white hover:bg-violet-500 disabled:opacity-50 transition-colors"
+                >
+                  {isExecuting ? 'Running…' : '✓ Approve'}
+                </button>
+                <button
+                  onClick={() => setPendingAgent(null)}
+                  disabled={isExecuting}
+                  className="flex-1 rounded-lg border border-neutral-700 py-1.5 text-xs font-semibold text-neutral-400 hover:text-neutral-200 disabled:opacity-50 transition-colors"
+                >
+                  ✕ Cancel
+                </button>
+              </div>
             </div>
           )}
 

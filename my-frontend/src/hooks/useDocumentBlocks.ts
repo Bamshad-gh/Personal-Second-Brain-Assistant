@@ -106,10 +106,12 @@ export function useCreateDocBlock(
       afterBlock,
       nextBlock,
       blockType,
+      parentId,
     }: {
       afterBlock: Block | null;
       nextBlock:  Block | null;
       blockType:  BlockType;
+      parentId?:  string;   // column block id when creating inside a column
     }) => {
       let newOrder: number;
       if (afterBlock && nextBlock) {
@@ -128,6 +130,7 @@ export function useCreateDocBlock(
         order:          newOrder,
         doc_visible:    true,
         canvas_visible: false,
+        ...(parentId !== undefined ? { parent: parentId } : {}),
       });
     },
     onSuccess: (newBlock) => {
@@ -245,6 +248,49 @@ export function useMakeColumns(pageId: string) {
   return useMutation({
     mutationFn: ({ sourceId, targetId }: { sourceId: string; targetId: string }) =>
       blockApi.makeColumns(sourceId, targetId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: docBlockKeys.all(pageId) });
+      queryClient.invalidateQueries({ queryKey: ['blocks', pageId] });
+    },
+  });
+}
+
+/**
+ * useAddToColumn — adds a top-level block as a new column in an existing container.
+ *
+ * Calls POST /api/blocks/add-to-column/ which creates a new column child inside
+ * the container and moves the source block into it. Widths redistribute equally.
+ * Use this when the target is already a column_container (builds 3-col, 4-col, etc.)
+ */
+export function useAddToColumn(pageId: string) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ sourceId, containerId }: { sourceId: string; containerId: string }) =>
+      blockApi.addToColumn(sourceId, containerId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: docBlockKeys.all(pageId) });
+      queryClient.invalidateQueries({ queryKey: ['blocks', pageId] });
+    },
+  });
+}
+
+/**
+ * useCollapseColumn — atomically removes an empty column from its container.
+ *
+ * Delegates all logic to the backend (POST /api/blocks/collapse-column/) so
+ * the dissolution runs in one DB transaction — no race condition.
+ *
+ * Cases handled server-side:
+ *   0 cols remain → soft-delete container
+ *   1 col remains → move content to top-level, soft-delete col + container
+ *   2+ cols remain → soft-delete column, redistribute widths equally
+ */
+export function useCollapseColumn(pageId: string) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (columnId: string) => blockApi.collapseColumn(columnId),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: docBlockKeys.all(pageId) });
       queryClient.invalidateQueries({ queryKey: ['blocks', pageId] });

@@ -19,17 +19,28 @@
  *   column_container → renders ColumnContainerBlock (passes itself as BlockRenderer
  *                      to avoid a circular static import)
  *   column           → returns null (rendered inside ColumnContainerBlock, not top-level)
+ *
+ * Column pass-through props (optional, only used by column_container):
+ *   onBlockCreate    — create a block inside a column (passes parentId = columnId)
+ *   onBlockDragStart — start a drag from inside a column (sets DocumentEditor state)
+ *   isDragging       — whether any block is being dragged (disables hover states)
+ *   dragOverBlockId  — the block currently being dragged over
+ *   dragOverPos      — 'top' | 'bottom' position of drop indicator
+ *   focusedBlockId   — which block currently has focus (for autoFocus inside columns)
+ *   focusAtEndBlockId— which block should focus at end (for focusAtEnd inside columns)
  */
 
 'use client';
 
 import { TextBlock }             from './TextBlock';
+import { CalloutBlock }          from './CalloutBlock';
 import { ListBlock }             from './ListBlock';
 import { CodeBlock }             from './CodeBlock';
 import { MediaBlock }            from './MediaBlock';
 import { DividerBlock }          from './DividerBlock';
+import { TableBlock }            from './TableBlock';
 import { ColumnContainerBlock }  from './ColumnContainerBlock';
-import type { Block }            from '@/types';
+import type { Block, BlockType } from '@/types';
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // TYPES
@@ -37,20 +48,31 @@ import type { Block }            from '@/types';
 
 export interface BlockRendererProps {
   block:                  Block;
-  index:                  number;  // position in the block list (used by ListBlock for numbering)
-  allBlocks?:             Block[]; // all page blocks — required for column_container rendering
+  index:                  number;
+  allBlocks?:             Block[];
   onSave:                 (blockId: string, content: Record<string, unknown>) => void;
   onEnter:                (blockId: string) => void;
   onDelete:               (blockId: string) => void;
-  onConvertToParagraph:   (blockId: string) => void;  // first Backspace on empty list item
+  onConvertToParagraph:   (blockId: string) => void;
   onFocus:                (blockId: string) => void;
   onBlur:                 (blockId: string) => void;
   onSlash:                (blockId: string, query: string) => void;
-  onTextChange:           (blockId: string, text: string) => void;  // immediate text update (no debounce)
+  onTextChange:           (blockId: string, text: string) => void;
   isSelected:             boolean;
   autoFocus?:             boolean;
-  focusAtEnd?:            boolean;  // focus at end of content (after next block deleted)
+  focusAtEnd?:            boolean;
   readOnly?:              boolean;
+
+  // ── Column pass-through props (optional) ─────────────────────────────────
+  // Populated by DocumentEditor; forwarded to ColumnContainerBlock.
+  onBlockCreate?:       (afterBlockId: string | null, blockType: BlockType, nextBlock: Block | null, columnId: string) => void;
+  onBlockDragStart?:    (blockId: string) => void;
+  onBlockContextMenu?:  (blockId: string, anchor: HTMLElement) => void;
+  isDragging?:          boolean;
+  dragOverBlockId?:     string | null;
+  dragOverPos?:         'top' | 'bottom';
+  focusedBlockId?:      string | null;
+  focusAtEndBlockId?:   string | null;
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -73,6 +95,14 @@ export function BlockRenderer({
   autoFocus,
   focusAtEnd,
   readOnly,
+  onBlockCreate,
+  onBlockDragStart,
+  onBlockContextMenu,
+  isDragging,
+  dragOverBlockId,
+  dragOverPos,
+  focusedBlockId,
+  focusAtEndBlockId,
 }: BlockRendererProps) {
 
   // ── Bind blockId into every callback ─────────────────────────────────────
@@ -91,16 +121,12 @@ export function BlockRenderer({
 
   switch (block.block_type) {
 
-    // ── Text blocks ──────────────────────────────────────────────────────────
-    // 'text' is the deprecated alias for 'paragraph' — kept here so existing
-    // blocks created before Phase 2 still render correctly.
     case 'text':
     case 'paragraph':
     case 'heading1':
     case 'heading2':
     case 'heading3':
     case 'quote':
-    case 'callout':
       return (
         <TextBlock
           block={block}
@@ -118,7 +144,6 @@ export function BlockRenderer({
         />
       );
 
-    // ── List blocks ───────────────────────────────────────────────────────────
     case 'bullet_item':
     case 'numbered_item':
     case 'todo_item':
@@ -139,7 +164,6 @@ export function BlockRenderer({
         />
       );
 
-    // ── Code block ────────────────────────────────────────────────────────────
     case 'code':
       return (
         <CodeBlock
@@ -150,7 +174,6 @@ export function BlockRenderer({
         />
       );
 
-    // ── Media blocks ──────────────────────────────────────────────────────────
     case 'image':
     case 'file':
     case 'pdf':
@@ -164,14 +187,39 @@ export function BlockRenderer({
         />
       );
 
-    // ── Divider ───────────────────────────────────────────────────────────────
+    case 'callout':
+      return (
+        <CalloutBlock
+          block={block}
+          onSave={save}
+          onEnter={enter}
+          onDelete={del}
+          onFocus={focus}
+          onBlur={blur}
+          onTextChange={textChange}
+          isSelected={isSelected}
+          autoFocus={autoFocus}
+          focusAtEnd={focusAtEnd}
+          readOnly={readOnly}
+        />
+      );
+
     case 'divider':
       return <DividerBlock />;
 
+    case 'table':
+      return (
+        <TableBlock
+          block={block}
+          onSave={save}
+          onDelete={del}
+          readOnly={readOnly}
+        />
+      );
+
     // ── Column container ──────────────────────────────────────────────────────
-    // Renders the column layout with resizable dividers.
-    // Passes itself (BlockRenderer) to avoid a circular static import — the
-    // component is resolved at runtime so the module graph stays acyclic.
+    // Renders the column layout. Passes itself to ColumnContainerBlock as
+    // BlockRenderer to break the circular static import.
     case 'column_container':
       return (
         <ColumnContainerBlock
@@ -189,18 +237,23 @@ export function BlockRenderer({
           selectedBlockId={isSelected ? block.id : null}
           readOnly={readOnly}
           BlockRenderer={BlockRenderer}
+          // Column interaction props (optional — only present when rendered inside DocumentEditor)
+          onBlockCreate={onBlockCreate}
+          onBlockDragStart={onBlockDragStart}
+          onBlockContextMenu={onBlockContextMenu}
+          isDragging={isDragging}
+          dragOverBlockId={dragOverBlockId}
+          dragOverPos={dragOverPos}
+          focusedBlockId={focusedBlockId}
+          focusAtEndBlockId={focusAtEndBlockId}
         />
       );
 
     // ── Column ────────────────────────────────────────────────────────────────
-    // Individual columns are rendered inside ColumnContainerBlock, not here.
-    // Returning null prevents them from appearing as top-level blocks if the
-    // parent === null filter somehow misses one.
+    // Rendered inside ColumnContainerBlock, not at top-level.
     case 'column':
       return null;
 
-    // ── Unknown / future block types ──────────────────────────────────────────
-    // Renders a placeholder so new registry types don't crash existing pages.
     default:
       return (
         <div className="my-1 rounded border border-dashed border-neutral-700 px-3 py-2 text-xs text-neutral-600">

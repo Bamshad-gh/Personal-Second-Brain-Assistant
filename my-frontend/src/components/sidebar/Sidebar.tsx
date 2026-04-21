@@ -218,10 +218,14 @@ export function Sidebar({ workspaceId, activePageId }: SidebarProps) {
         data-workspace-color={displayWorkspace?.color ?? 'white'}
         className={[
           'sidebar-workspace-tint',
-          'fixed left-0 top-0 h-screen z-40 flex flex-col',
-          'transition-all duration-200',
+          // bg-neutral-900 gives a solid opaque base; .light overrides it to #fff.
+          // Without this the sidebar is translucent on mobile (workspace tint is ~5% opacity).
+          'bg-neutral-900',
+          'fixed inset-y-0 left-0 z-40 flex flex-col',
+          'transition-transform duration-200',
           sidebarCollapsed ? 'w-12' : 'w-[260px]',
-          sidebarOpen ? 'translate-x-0' : '-translate-x-full md:-translate-x-full',
+          // Mobile: slide in/out. Desktop: always pinned (md:translate-x-0 overrides mobile state).
+          sidebarOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0',
         ].join(' ')}
       >
         {/* ── Header: workspace switcher + collapse button ───────────────── */}

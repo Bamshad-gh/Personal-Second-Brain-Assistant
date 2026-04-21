@@ -110,7 +110,15 @@ const BLOCK_TEMPLATES: { type: string; label: string; icon: string }[] = [
   { type: 'sticky',   label: 'Sticky',  icon: '★' },
   { type: 'rich',     label: 'Rich',    icon: '≡' },
   { type: 'heading1', label: 'Heading', icon: 'H' },
+  { type: 'image',    label: 'Image',   icon: '🖼' },
+  { type: 'pdf',      label: 'PDF',     icon: '📄' },
 ];
+
+/** Default canvas size overrides for block types that need more space */
+const TEMPLATE_SIZE: Record<string, { canvas_w?: number; canvas_h?: number }> = {
+  image: { canvas_w: 420 },
+  pdf:   { canvas_w: 520, canvas_h: 560 },
+};
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // HELPERS
@@ -136,19 +144,40 @@ function extractPreviewText(node: unknown, max = 150): string {
 
 /**
  * extractSharedBlockText — short label for a shared block in the panel list.
- * Concatenates text nodes from the block's TipTap JSON, capped at 35 chars.
+ * Handles all block types explicitly; falls back to TipTap JSON walk for text types.
  */
 function extractSharedBlockText(block: Block): string {
-  const parts: string[] = [];
-  function walk(n: unknown): void {
-    if (!n || typeof n !== 'object') return;
-    const obj = n as Record<string, unknown>;
-    if (obj.type === 'text' && typeof obj.text === 'string') parts.push(obj.text);
-    if (Array.isArray(obj.content)) obj.content.forEach(walk);
+  switch (block.block_type) {
+    case 'image':
+      return `🖼 ${String(block.content.filename ?? block.content.alt ?? 'Image')}`;
+    case 'pdf':
+      return `📄 ${String(block.content.filename ?? 'PDF document')}`;
+    case 'video':
+      return `🎥 ${String(block.content.filename ?? 'Video')}`;
+    case 'table':
+      return '⊞ Table';
+    case 'code':
+      return `</> ${String(block.content.language ?? 'code')}: ${
+        String(block.content.code ?? '').slice(0, 30)
+      }`;
+    case 'callout': {
+      const emoji = String(block.content.emoji ?? '💡');
+      const text  = String(block.content.text  ?? '');
+      return `${emoji} ${text.slice(0, 30)}`;
+    }
+    default: {
+      const parts: string[] = [];
+      function walk(n: unknown): void {
+        if (!n || typeof n !== 'object') return;
+        const obj = n as Record<string, unknown>;
+        if (obj.type === 'text' && typeof obj.text === 'string') parts.push(obj.text);
+        if (Array.isArray(obj.content)) obj.content.forEach(walk);
+      }
+      walk(block.content?.json ?? block.content);
+      const text = parts.join(' ').trim();
+      return text.slice(0, 35) || `(${block.block_type} block)`;
+    }
   }
-  walk(block.content?.json);
-  const text = parts.join(' ').trim();
-  return text.slice(0, 35) || `(${block.block_type} block)`;
 }
 
 /**
@@ -195,6 +224,10 @@ export function CanvasView({
   const [selectedId,  setSelectedId]  = useState<string | null>(null);
   const [isPanning,   setIsPanning]   = useState(false);
   const [isSpaceDown, setIsSpaceDown] = useState(false);
+
+  // ── Touch gesture state (single-finger pan + two-finger pinch zoom) ───────
+  const touchPanStartRef = useRef<{ x: number; y: number; px: number; py: number } | null>(null);
+  const pinchStartRef    = useRef<{ dist: number; scale: number } | null>(null);
 
   // ── Rich block editing state ──────────────────────────────────────────────
   const [editingBlockId, setEditingBlockId] = useState<string | null>(null);
@@ -551,6 +584,69 @@ export function CanvasView({
     }
   }
 
+  // ── Touch handlers (mobile pan + pinch-zoom) ─────────────────────────────
+
+  function handleTouchStart(e: React.TouchEvent<HTMLDivElement>) {
+    if (e.touches.length === 1) {
+      // Single finger — begin pan
+      touchPanStartRef.current = {
+        x:  e.touches[0].clientX,
+        y:  e.touches[0].clientY,
+        px: panXRef.current,
+        py: panYRef.current,
+      };
+      pinchStartRef.current = null;
+    } else if (e.touches.length === 2) {
+      // Two fingers — begin pinch zoom
+      const dist = Math.hypot(
+        e.touches[0].clientX - e.touches[1].clientX,
+        e.touches[0].clientY - e.touches[1].clientY,
+      );
+      pinchStartRef.current    = { dist, scale: scaleRef.current };
+      touchPanStartRef.current = null;
+    }
+  }
+
+  function handleTouchMove(e: React.TouchEvent<HTMLDivElement>) {
+    e.preventDefault(); // stop browser scroll / native zoom
+
+    if (e.touches.length === 1 && touchPanStartRef.current) {
+      const dx = e.touches[0].clientX - touchPanStartRef.current.x;
+      const dy = e.touches[0].clientY - touchPanStartRef.current.y;
+      updatePan(touchPanStartRef.current.px + dx, touchPanStartRef.current.py + dy);
+
+    } else if (e.touches.length === 2 && pinchStartRef.current) {
+      const dist = Math.hypot(
+        e.touches[0].clientX - e.touches[1].clientX,
+        e.touches[0].clientY - e.touches[1].clientY,
+      );
+      const newScale = Math.min(
+        MAX_SCALE,
+        Math.max(MIN_SCALE, pinchStartRef.current.scale * (dist / pinchStartRef.current.dist)),
+      );
+      updateScale(newScale);
+
+      // Also pan so the midpoint between fingers stays fixed
+      const rect = containerRef.current?.getBoundingClientRect();
+      if (rect && pinchStartRef.current) {
+        const midX = (e.touches[0].clientX + e.touches[1].clientX) / 2 - rect.left;
+        const midY = (e.touches[0].clientY + e.touches[1].clientY) / 2 - rect.top;
+        const ratio = newScale / pinchStartRef.current.scale;
+        updatePan(
+          midX - (midX - panXRef.current) * ratio,
+          midY - (midY - panYRef.current) * ratio,
+        );
+        // Update pinch baseline so each frame is relative to previous
+        pinchStartRef.current = { dist, scale: newScale };
+      }
+    }
+  }
+
+  function handleTouchEnd() {
+    touchPanStartRef.current = null;
+    pinchStartRef.current    = null;
+  }
+
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   // RENDER
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -559,11 +655,14 @@ export function CanvasView({
     <div
       ref={containerRef}
       className="relative w-full h-full overflow-hidden bg-neutral-950 bg-dot-grid"
-      style={{ cursor }}
+      style={{ cursor, touchAction: 'none' }}
       onPointerDown={handlePointerDown}
       onPointerMove={handlePointerMove}
       onPointerUp={handlePointerUp}
       onPointerLeave={() => setHoveredBlockId(null)}
+      onTouchStart={handleTouchStart}
+      onTouchMove={handleTouchMove}
+      onTouchEnd={handleTouchEnd}
       onClick={() => {
         // Don't deselect while the rich block editor is open — clicks on the
         // SlashMenuPortal (portaled to document.body) still bubble through the
@@ -596,6 +695,7 @@ export function CanvasView({
         const blockType = draggedTypeRef.current;
         if (!blockType) return;
         draggedTypeRef.current = null;
+        const sizeDefaults = TEMPLATE_SIZE[blockType] ?? {};
         createBlock.mutate({
           block_type: blockType as BlockType,
           content: {},
@@ -603,6 +703,7 @@ export function CanvasView({
           canvas_y: dropY,
           canvas_visible: true,
           doc_visible: false,
+          ...sizeDefaults,
         });
       }}
     >
@@ -729,6 +830,9 @@ export function CanvasView({
                   }}
                   onContentSave={(_blockId, json) =>
                     updateBlock.mutate({ id: block.id, payload: { content: { json } } })
+                  }
+                  onSaveContent={(content) =>
+                    updateBlock.mutate({ id: block.id, payload: { content } })
                   }
                   onEditStart={() => setEditingBlockId(block.id)}
                   onColorChange={(color) =>
@@ -861,10 +965,12 @@ export function CanvasView({
                     onDragEnd={() => { draggedSharedBlockIdRef.current = null; }}
                     className="mx-2 my-1 rounded-lg border border-neutral-700 bg-neutral-800 px-3 py-2 cursor-grab text-xs text-neutral-300 select-none hover:bg-neutral-700 transition-colors"
                   >
-                    <span className="text-neutral-500 text-[10px] uppercase mr-1">
-                      {b.block_type}
-                    </span>
-                    {extractSharedBlockText(b)}
+                    <div className="flex items-center gap-2">
+                      <span className="w-12 shrink-0 truncate text-[9px] uppercase text-neutral-600">
+                        {b.block_type.replace('_', ' ')}
+                      </span>
+                      <span className="truncate">{extractSharedBlockText(b)}</span>
+                    </div>
                   </div>
                 ))
               )}

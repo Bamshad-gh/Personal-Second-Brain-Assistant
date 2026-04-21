@@ -36,6 +36,7 @@ import { Menu } from 'lucide-react';
 import { useAppStore } from '@/lib/store';
 import { Sidebar } from '@/components/sidebar/Sidebar';
 import { AuthInitializer } from '@/components/AuthInitializer';
+import { GlobalAiAssistant } from '@/components/ai/GlobalAiAssistant';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -69,12 +70,14 @@ export function AppShellClient({ children }: AppShellClientProps) {
   // is available, causing a redirect to login on every page refresh.
   const [authReady, setAuthReady] = useState(false);
 
-  // ── Sidebar margin — shifts main content right when sidebar is open ───────
-  const sidebarMargin = workspaceId && sidebarOpen
+  // ── Sidebar margin — shifts main content right on desktop ────────────────
+  // Mobile always gets ml-0 (sidebar overlays as drawer).
+  // Desktop always gets ml-* (sidebar is pinned — sidebarOpen only affects mobile).
+  const sidebarMargin = workspaceId
     ? sidebarCollapsed
-      ? 'md:ml-12'         // collapsed rail — 48px
-      : 'md:ml-[260px]'    // full sidebar — 260px
-    : '';                  // no sidebar or sidebar closed — no margin
+      ? 'ml-0 md:ml-12'        // collapsed rail — 48px on desktop
+      : 'ml-0 md:ml-[260px]'   // full sidebar — 260px on desktop
+    : '';
 
   // ── Loading state — shown while token is being restored ──────────────────
   if (!authReady) {
@@ -134,6 +137,14 @@ export function AppShellClient({ children }: AppShellClientProps) {
         </div>
 
       </main>
+
+      {/* ── Global AI assistant — floating button + chat panel ─────────────── */}
+      {workspaceId && (
+        <GlobalAiAssistant
+          workspaceId={workspaceId}
+          currentPageId={pageId ?? undefined}
+        />
+      )}
     </div>
   );
 }

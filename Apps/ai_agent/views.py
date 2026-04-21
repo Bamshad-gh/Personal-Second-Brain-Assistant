@@ -16,13 +16,19 @@ All registered in: Apps/ai_agent/urls.py → config/urls.py
 ════════════════════════════════════════════════════════════════════
 """
 
+import logging
+
 from django.utils import timezone
 from django.db.models import Sum
 
 from rest_framework.views import APIView
+
+logger = logging.getLogger(__name__)
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from rest_framework import status
+
+from django.shortcuts import get_object_or_404
 
 from .serializers import AiActionSerializer, AiChatSerializer
 from .models import AiUsageLog, AiUserQuota, AiChatMessage
@@ -461,3 +467,163 @@ def _extract_tiptap_text(node: dict) -> str:
     for child in node.get('content', []):
         parts.append(_extract_tiptap_text(child))
     return ' '.join(filter(None, parts))
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# AI Agent views
+# ─────────────────────────────────────────────────────────────────────────────
+
+class AiAgentChatView(APIView):
+    """
+    POST /api/ai/agent-chat/
+
+    Enhanced chat that returns structured JSON action proposals.
+    The AI may propose create/modify actions that require user confirmation
+    before the frontend executes them.
+
+    Request body:
+      messages  (required) — [{"role": "user"|"assistant", "content": "..."}]
+      page_id   (optional) — page UUID used as context + history thread key
+      context   (optional) — extra context text (e.g. page content)
+
+    Response:
+      Normal message:
+        { "type": "message", "message": str,
+          "input_tokens": int, "output_tokens": int }
+
+      Action proposal (frontend must confirm before executing):
+        { "type": "action", "action": str, "data": dict, "message": str,
+          "input_tokens": int, "output_tokens": int }
+
+    Error 429:
+      { "error": str, "quota_exceeded": true }
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        messages = request.data.get('messages', [])
+        page_id  = request.data.get('page_id')
+        context  = request.data.get('context', '')
+
+        if not messages:
+            return Response(
+                {'error': 'messages field is required and must be non-empty.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Optionally enrich context from the page (same helper used by AiChatView)
+        if page_id and not context:
+            page_text = AiActionView()._get_page_text(page_id, request.user)
+            if page_text:
+                context = page_text
+
+        try:
+            parsed, input_tok, output_tok = services.run_agent_chat(
+                messages=messages,
+                page_context=context,
+                user=request.user,
+                page_id=page_id,
+            )
+        except PermissionError as e:
+            return Response(
+                {'error': str(e), 'quota_exceeded': True},
+                status=status.HTTP_429_TOO_MANY_REQUESTS,
+            )
+        except Exception as e:
+            logger.exception('AiAgentChatView: run_agent_chat failed')
+            return Response(
+                {'error': f'Agent error: {str(e)}'},
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
+
+        # Log usage — wrapped so a logging failure never breaks the response
+        try:
+            AiUsageLog.objects.create(
+                user=request.user,
+                call_type='chat',
+                action_name='agent_chat',
+                provider=type(services.get_provider()).__name__,
+                model=services.get_model('default'),
+                input_tokens=input_tok,
+                output_tokens=output_tok,
+            )
+        except Exception:
+            pass
+
+        return Response({
+            **parsed,
+            'input_tokens':  input_tok,
+            'output_tokens': output_tok,
+        })
+
+
+class PageCreateWithBlocksView(APIView):
+    """
+    POST /api/ai/execute/create-page/
+
+    Creates a page with an initial set of blocks in one atomic transaction.
+    Called by the frontend after the user approves an AI 'create_page' proposal.
+
+    Request body:
+      workspace_id  (required) — UUID of the target workspace
+      title         (required) — page title string
+      blocks        (optional) — list of { block_type, content } objects
+
+    Response:
+      Full PageSerializer representation of the new page (201).
+
+    Errors:
+      404 — workspace not found or not owned by the requesting user
+      400 — missing workspace_id
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        from Apps.workspaces.models import Workspace
+        from Apps.pages.models import Page
+        from Apps.blocks.models import Block, VALID_BLOCK_TYPES
+        from Apps.pages.serializers import PageSerializer
+        from django.db import transaction
+
+        workspace_id = request.data.get('workspace_id')
+        if not workspace_id:
+            return Response(
+                {'error': 'workspace_id is required.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        title       = request.data.get('title', 'Untitled')
+        blocks_data = request.data.get('blocks', [])
+
+        workspace = get_object_or_404(
+            Workspace,
+            pk=workspace_id,
+            owner=request.user,
+        )
+
+        with transaction.atomic():
+            page = Page.objects.create(
+                workspace=workspace,
+                title=title,
+                created_by=request.user,
+            )
+
+            for i, block_data in enumerate(blocks_data):
+                btype = block_data.get('block_type', 'paragraph')
+                # Silently coerce unknown types to paragraph so a bad AI
+                # response never causes a 500 — the page still gets created.
+                if btype not in VALID_BLOCK_TYPES:
+                    btype = 'paragraph'
+
+                Block.objects.create(
+                    page=page,
+                    block_type=btype,
+                    content=block_data.get('content', {}),
+                    order=float(i + 1),
+                    doc_visible=True,
+                    canvas_visible=False,
+                )
+
+        return Response(PageSerializer(page).data, status=status.HTTP_201_CREATED)

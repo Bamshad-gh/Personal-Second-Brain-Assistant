@@ -104,6 +104,8 @@ export type BlockType =
   | 'todo_item'
   // ── Code ──────────────────────────────────────────────────────────────────
   | 'code'
+  // ── Table ─────────────────────────────────────────────────────────────────
+  | 'table'
   // ── Media ─────────────────────────────────────────────────────────────────
   | 'image'
   | 'file'
@@ -269,6 +271,7 @@ export interface User {
   full_name?:   string;   // optional — only present on some endpoints
   display_name: string;
   avatar:       string | null;
+  is_staff?:    boolean;  // true for staff/admin users; absent on older tokens
 }
 
 /**
@@ -353,6 +356,7 @@ export interface Block {
   doc_visible:    boolean;
   canvas_visible: boolean;
   bg_color:       string;
+  text_color:     string;
   enc_tier:       EncTier;
   ai_consent:     AiConsent;
   is_locked:      boolean;
@@ -468,6 +472,7 @@ export interface UpdateBlockPayload {
   doc_visible?:    boolean;
   canvas_visible?: boolean;
   bg_color?:       string;
+  text_color?:     string;
   is_locked?:      boolean;
   enc_tier?:       EncTier;
   ai_consent?:     AiConsent;

@@ -8,6 +8,8 @@ from .views import (
     AiUsageView,
     AiQuotaView,
     TranscribeView,
+    AiAgentChatView,
+    PageCreateWithBlocksView,
 )
 
 urlpatterns = [
@@ -22,6 +24,12 @@ urlpatterns = [
 
     # Free-form chat with the AI (optionally grounded in a page's content)
     path('chat/', AiChatView.as_view(), name='ai-chat'),
+
+    # AI Agent — structured JSON responses with action proposals
+    path('agent-chat/', AiAgentChatView.as_view(), name='ai-agent-chat'),
+
+    # Execute endpoints — called after user approves an agent action proposal
+    path('execute/create-page/', PageCreateWithBlocksView.as_view(), name='ai-execute-create-page'),
 
     # Token usage summary for the current user (sidebar footer indicator)
     path('usage/', AiUsageView.as_view(), name='ai-usage'),

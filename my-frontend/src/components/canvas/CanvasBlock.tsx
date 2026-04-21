@@ -58,6 +58,7 @@ import { createPortal }                 from 'react-dom';
 import { useEditor, EditorContent }     from '@tiptap/react';
 import StarterKit                       from '@tiptap/starter-kit';
 import { GripVertical, X, FileText }    from 'lucide-react';
+import { blockApi }                     from '@/lib/api';
 import type { Block }                   from '@/types';
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -91,6 +92,8 @@ interface CanvasBlockProps {
   onDragEnd:           (x: number, y: number) => void;
   onResizeEnd:         (w: number, h: number) => void;
   onContentSave:       (blockId: string, json: Record<string, unknown>) => void;
+  /** Saves arbitrary content object directly (used by media blocks after upload) */
+  onSaveContent?:      (content: Record<string, unknown>) => void;
   onEditStart?:        () => void;
   onColorChange:       (color: string) => void;
 }
@@ -132,6 +135,7 @@ export function CanvasBlock({
   onDragEnd,
   onResizeEnd,
   onContentSave,
+  onSaveContent,
   onEditStart,
   onColorChange,
 }: CanvasBlockProps) {
@@ -438,43 +442,38 @@ export function CanvasBlock({
         )}
 
         {/* ── Block type label — white text on dark pill, always readable ─ */}
-        {isSticky ? (
-          <span
-            style={{
-              color:           'white',
-              backgroundColor: 'rgba(0,0,0,0.35)',
-              borderRadius:    '4px',
-              padding:         '1px 6px',
-            }}
-            className="text-xs"
-          >
-            ● Sticky
-          </span>
-        ) : block.block_type === 'rich' ? (
-          <span
-            style={{
-              color:           'white',
-              backgroundColor: 'rgba(0,0,0,0.35)',
-              borderRadius:    '4px',
-              padding:         '1px 6px',
-            }}
-            className="text-xs"
-          >
-            ≡ Rich
-          </span>
-        ) : (
-          <span
-            style={{
-              color:           'white',
-              backgroundColor: 'rgba(0,0,0,0.35)',
-              borderRadius:    '4px',
-              padding:         '1px 6px',
-            }}
-            className="text-xs"
-          >
-            ≡ Text
-          </span>
-        )}
+        {(() => {
+          const LABEL: Record<string, string> = {
+            sticky:         '● Sticky',
+            rich:           '≡ Rich',
+            heading1:       'H¹ Heading',
+            heading2:       'H² Heading',
+            heading3:       'H³ Heading',
+            image:          '🖼 Image',
+            pdf:            '📄 PDF',
+            paragraph:      '¶ Text',
+            quote:          '" Quote',
+            bullet_item:    '• Bullet',
+            numbered_item:  '1. List',
+            todo_item:      '☐ Todo',
+            callout:        '💡 Callout',
+            code:           '</> Code',
+            divider:        '— Divider',
+          };
+          return (
+            <span
+              style={{
+                color:           'white',
+                backgroundColor: 'rgba(0,0,0,0.35)',
+                borderRadius:    '4px',
+                padding:         '1px 6px',
+              }}
+              className="text-xs truncate max-w-32"
+            >
+              {LABEL[block.block_type] ?? '≡ Text'}
+            </span>
+          );
+        })()}
       </div>
 
       {/* ── Content area ────────────────────────────────────────────────── */}
@@ -488,16 +487,39 @@ export function CanvasBlock({
         {(block.block_type === 'text' || block.block_type === 'sticky') && (
           <TextContent block={block} onContentSave={onContentSave} />
         )}
-        {block.block_type === 'heading1' && (
+        {(block.block_type === 'heading1' || block.block_type === 'heading2' || block.block_type === 'heading3') && (
           <HeadingContent block={block} />
         )}
         {block.block_type === 'image' && (
-          <ImageContent block={block} />
+          <ImageContent block={block} onSaveContent={onSaveContent} />
+        )}
+        {block.block_type === 'pdf' && (
+          <PdfContent block={block} onSaveContent={onSaveContent} />
         )}
         {block.block_type === 'rich' && (
           <RichPreviewContent block={block} onEditStart={onEditStart} />
         )}
-        {!['text', 'sticky', 'heading1', 'image', 'rich'].includes(block.block_type) && (
+        {(block.block_type === 'paragraph' || block.block_type === 'quote') && (
+          <DocTextContent block={block} />
+        )}
+        {(block.block_type === 'bullet_item' || block.block_type === 'numbered_item' || block.block_type === 'todo_item') && (
+          <DocListItemContent block={block} />
+        )}
+        {block.block_type === 'callout' && (
+          <DocCalloutContent block={block} />
+        )}
+        {block.block_type === 'code' && (
+          <DocCodeContent block={block} />
+        )}
+        {block.block_type === 'divider' && (
+          <hr className="border-neutral-300 dark:border-neutral-700 my-2" />
+        )}
+        {block.block_type === 'column_container' && (
+          <PlaceholderContent blockType="column layout" note="Edit in document mode" />
+        )}
+        {!['text', 'sticky', 'heading1', 'heading2', 'heading3', 'image', 'pdf', 'rich',
+            'paragraph', 'quote', 'bullet_item', 'numbered_item', 'todo_item',
+            'callout', 'code', 'divider', 'column_container'].includes(block.block_type) && (
           <PlaceholderContent blockType={block.block_type} />
         )}
       </div>
@@ -613,39 +635,277 @@ function TextContent({ block, onContentSave }: TextContentProps) {
 
 function HeadingContent({ block }: { block: Block }) {
   const text = extractTipTapText(block.content?.json ?? {}) || 'Heading';
+  const cls =
+    block.block_type === 'heading1' ? 'text-xl font-bold' :
+    block.block_type === 'heading2' ? 'text-lg font-semibold' :
+                                      'text-base font-medium';
   return (
-    <h2 className="text-xl font-bold leading-snug wrap-break-word">
-      {text}
-    </h2>
+    <p className={`leading-snug wrap-break-word ${cls}`}>{text}</p>
   );
 }
 
-// ── ImageContent — renders the stored image src ───────────────────────────────
+// ── ImageContent — upload zone → <img> once URL is stored ───────────────────
 
-function ImageContent({ block }: { block: Block }) {
-  const src = block.content?.src as string | undefined;
-  if (!src) {
+const MAX_BYTES = 10 * 1024 * 1024; // 10 MB
+
+interface MediaContentProps {
+  block:          Block;
+  onSaveContent?: (content: Record<string, unknown>) => void;
+}
+
+function ImageContent({ block, onSaveContent }: MediaContentProps) {
+  const [uploading, setUploading] = useState(false);
+  const [error,     setError]     = useState('');
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  // Support both content.url (new upload API) and content.src (legacy)
+  const url = (block.content?.url ?? block.content?.src) as string | undefined;
+
+  async function handleFile(file: File) {
+    if (file.size > MAX_BYTES) { setError('Max 10 MB'); return; }
+    setError('');
+    setUploading(true);
+    try {
+      const result = await blockApi.uploadFile(file);
+      onSaveContent?.({ url: result.url, filename: result.filename, alt: file.name });
+    } catch {
+      setError('Upload failed. Please try again.');
+    } finally {
+      setUploading(false);
+    }
+  }
+
+  if (!url) {
     return (
-      <p className="text-xs italic opacity-60">No image source</p>
+      <div onPointerDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()}>
+        <div
+          onDrop={(e) => { e.preventDefault(); const f = e.dataTransfer.files[0]; if (f) handleFile(f); }}
+          onDragOver={(e) => e.preventDefault()}
+          onClick={() => !uploading && inputRef.current?.click()}
+          className="flex min-h-28 flex-col items-center justify-center rounded-lg
+                     border-2 border-dashed border-neutral-300 dark:border-neutral-700
+                     cursor-pointer hover:border-violet-400 dark:hover:border-violet-500
+                     transition-colors"
+        >
+          {uploading ? (
+            <div className="h-5 w-5 animate-spin rounded-full border-2 border-violet-500 border-t-transparent" />
+          ) : (
+            <>
+              <span className="text-3xl mb-1">🖼</span>
+              <p className="text-xs text-neutral-500 dark:text-neutral-400">Drop or click to upload</p>
+              <p className="text-[10px] text-neutral-400 dark:text-neutral-600 mt-0.5">Max 10 MB</p>
+            </>
+          )}
+        </div>
+        <input ref={inputRef} type="file" className="hidden" accept="image/*"
+          onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFile(f); e.target.value = ''; }} />
+        {error && <p className="mt-1 text-xs text-red-400">{error}</p>}
+      </div>
     );
   }
+
   return (
-    <img
-      src={src}
-      alt=""
-      className="w-full h-auto object-contain rounded"
-      draggable={false}
-    />
+    <div className="w-full h-full" onPointerDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()}>
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        src={url}
+        alt={String(block.content?.alt ?? '')}
+        className="w-full h-full object-contain rounded"
+        draggable={false}
+      />
+    </div>
+  );
+}
+
+// ── PdfContent — upload zone → blob-URL iframe (bypasses X-Frame-Options) ────
+
+function PdfContent({ block, onSaveContent }: MediaContentProps) {
+  const [uploading,   setUploading]   = useState(false);
+  const [error,       setError]       = useState('');
+  const [pdfBlobUrl,  setPdfBlobUrl]  = useState('');
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  const url = block.content?.url as string | undefined;
+
+  // Fetch PDF and create a same-origin blob URL to bypass X-Frame-Options: DENY
+  useEffect(() => {
+    if (!url) return;
+    let objectUrl = '';
+    fetch(url)
+      .then((r) => r.blob())
+      .then((blob) => {
+        objectUrl = URL.createObjectURL(blob);
+        setPdfBlobUrl(objectUrl);
+      })
+      .catch(() => { /* iframe will be empty; Open ↗ link still works */ });
+    return () => { if (objectUrl) URL.revokeObjectURL(objectUrl); };
+  }, [url]);
+
+  async function handleFile(file: File) {
+    if (file.size > MAX_BYTES) { setError('Max 10 MB'); return; }
+    setError('');
+    setUploading(true);
+    try {
+      const result = await blockApi.uploadFile(file);
+      onSaveContent?.({ url: result.url, filename: result.filename, size: result.size });
+    } catch {
+      setError('Upload failed. Please try again.');
+    } finally {
+      setUploading(false);
+    }
+  }
+
+  if (!url) {
+    return (
+      <div onPointerDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()}>
+        <div
+          onDrop={(e) => { e.preventDefault(); const f = e.dataTransfer.files[0]; if (f) handleFile(f); }}
+          onDragOver={(e) => e.preventDefault()}
+          onClick={() => !uploading && inputRef.current?.click()}
+          className="flex min-h-28 flex-col items-center justify-center rounded-lg
+                     border-2 border-dashed border-neutral-300 dark:border-neutral-700
+                     cursor-pointer hover:border-violet-400 dark:hover:border-violet-500
+                     transition-colors"
+        >
+          {uploading ? (
+            <div className="h-5 w-5 animate-spin rounded-full border-2 border-violet-500 border-t-transparent" />
+          ) : (
+            <>
+              <span className="text-3xl mb-1">📄</span>
+              <p className="text-xs text-neutral-500 dark:text-neutral-400">Drop or click to upload PDF</p>
+              <p className="text-[10px] text-neutral-400 dark:text-neutral-600 mt-0.5">Max 10 MB</p>
+            </>
+          )}
+        </div>
+        <input ref={inputRef} type="file" className="hidden" accept="application/pdf"
+          onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFile(f); e.target.value = ''; }} />
+        {error && <p className="mt-1 text-xs text-red-400">{error}</p>}
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex flex-col h-full" onPointerDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()}>
+      {/* Header bar */}
+      <div className="flex items-center justify-between px-2 py-1
+                      bg-black/10 dark:bg-black/20 rounded-t shrink-0">
+        <span className="truncate text-xs opacity-60">
+          {String(block.content?.filename ?? 'Document.pdf')}
+        </span>
+        <a
+          href={url}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="ml-2 shrink-0 text-xs text-violet-400 hover:text-violet-300"
+        >
+          Open ↗
+        </a>
+      </div>
+      {/* Iframe — uses blob URL to bypass X-Frame-Options: DENY */}
+      {pdfBlobUrl ? (
+        <iframe
+          src={pdfBlobUrl}
+          className="flex-1 w-full rounded-b min-h-36"
+          title={String(block.content?.filename ?? 'PDF')}
+        />
+      ) : (
+        <div className="flex flex-1 min-h-36 items-center justify-center">
+          <div className="h-5 w-5 animate-spin rounded-full border-2 border-violet-500 border-t-transparent" />
+        </div>
+      )}
+    </div>
   );
 }
 
 // ── PlaceholderContent — unsupported block type ───────────────────────────────
 
-function PlaceholderContent({ blockType }: { blockType: string }) {
+function PlaceholderContent({ blockType, note }: { blockType: string; note?: string }) {
   return (
     <p className="text-xs italic opacity-60">
-      [{blockType.replace('_', ' ')} — switch to document mode to edit]
+      [{blockType.replace(/_/g, ' ')}{note ? ` — ${note}` : ' — switch to document mode to edit'}]
     </p>
+  );
+}
+
+// ── resolveBlockText — reads TipTap JSON or plain text string, whichever exists ─
+// Blocks created via slash menu store { text: "...", marks: [] }.
+// Blocks edited in TipTap store { json: { type: 'doc', content: [...] } }.
+// This helper handles both so canvas previews always show the right content.
+function resolveBlockText(block: Block): string {
+  const jsonText = extractTipTapText(block.content?.json ?? {});
+  if (jsonText) return jsonText;
+  return String(block.content?.text ?? '');
+}
+
+// ── DocTextContent — paragraph / quote ────────────────────────────────────────
+
+function DocTextContent({ block }: { block: Block }) {
+  const text = resolveBlockText(block);
+  const isQuote = block.block_type === 'quote';
+  if (!text) {
+    return <p className="text-xs italic opacity-40">{isQuote ? 'Empty quote' : 'No content'}</p>;
+  }
+  if (isQuote) {
+    return (
+      <blockquote className="border-l-2 border-neutral-400 dark:border-neutral-600 pl-2 text-sm italic opacity-80 wrap-break-word">
+        {text}
+      </blockquote>
+    );
+  }
+  return <p className="text-sm leading-relaxed wrap-break-word">{text}</p>;
+}
+
+// ── DocListItemContent — bullet / numbered / todo ─────────────────────────────
+
+function DocListItemContent({ block }: { block: Block }) {
+  const text    = resolveBlockText(block);
+  const checked = block.content?.checked === true;
+
+  const bullet =
+    block.block_type === 'bullet_item'   ? '•' :
+    block.block_type === 'numbered_item' ? '1.' :
+    checked                              ? '☑' : '☐';
+
+  return (
+    <div className="flex items-start gap-2 text-sm">
+      <span className="shrink-0 opacity-60 mt-px">{bullet}</span>
+      <span className={`wrap-break-word ${checked ? 'line-through opacity-50' : ''}`}>
+        {text || <span className="italic opacity-40">Empty item</span>}
+      </span>
+    </div>
+  );
+}
+
+// ── DocCalloutContent — emoji + text ──────────────────────────────────────────
+
+function DocCalloutContent({ block }: { block: Block }) {
+  const emoji = String(block.content?.emoji ?? '💡');
+  const text  = String(block.content?.text  ?? '');
+  return (
+    <div className="flex items-start gap-2 rounded-lg bg-neutral-100 dark:bg-neutral-800/60 px-3 py-2">
+      <span className="shrink-0 text-base">{emoji}</span>
+      <p className="text-sm leading-relaxed wrap-break-word opacity-90">
+        {text || <span className="italic opacity-40">Empty callout</span>}
+      </p>
+    </div>
+  );
+}
+
+// ── DocCodeContent — language label + code preview ───────────────────────────
+
+function DocCodeContent({ block }: { block: Block }) {
+  const lang = String(block.content?.language ?? 'code');
+  const code = String(block.content?.code      ?? '');
+  return (
+    <div className="rounded-lg bg-black/10 dark:bg-black/30 overflow-hidden">
+      <div className="flex items-center gap-1.5 px-2 py-1 bg-black/10 dark:bg-black/20">
+        <span className="text-[10px] font-mono opacity-60">&lt;/&gt;</span>
+        <span className="text-[10px] font-mono opacity-50">{lang}</span>
+      </div>
+      <pre className="text-[10px] font-mono px-2 py-1.5 overflow-hidden leading-relaxed">
+        {code.slice(0, 200)}{code.length > 200 ? '…' : ''}
+      </pre>
+    </div>
   );
 }
 

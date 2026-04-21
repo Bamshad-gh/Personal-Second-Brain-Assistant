@@ -43,6 +43,7 @@ import {
   Type, Heading1, Heading2, Heading3,
   Code, Quote, CheckSquare, Minus,
   List, ListOrdered, ChevronRight, Image, Lightbulb,
+  FileText, Video, Table2,
 } from 'lucide-react';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -207,6 +208,33 @@ export const COMMANDS: SlashCommandItem[] = [
     group:       'Media & Code',
     icon:        <Image size={15} />,
     blockType:   'image',
+    command:     deleteSlashTrigger,
+  },
+  {
+    id:          'pdf',
+    label:       'PDF',
+    description: 'Embed a PDF document',
+    group:       'Media & Code',
+    icon:        <FileText size={15} />,
+    blockType:   'pdf',
+    command:     deleteSlashTrigger,
+  },
+  {
+    id:          'video',
+    label:       'Video',
+    description: 'Embed a video',
+    group:       'Media & Code',
+    icon:        <Video size={15} />,
+    blockType:   'video',
+    command:     deleteSlashTrigger,
+  },
+  {
+    id:          'table',
+    label:       'Table',
+    description: 'Insert a table',
+    group:       'Media & Code',
+    icon:        <Table2 size={15} />,
+    blockType:   'table',
     command:     deleteSlashTrigger,
   },
 

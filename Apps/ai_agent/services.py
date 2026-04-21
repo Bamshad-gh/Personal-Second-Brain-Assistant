@@ -34,7 +34,13 @@ ENDPOINT MAP
 ════════════════════════════════════════════════════════════════════
 """
 
+import json
+import re
+import logging
+
 from django.conf import settings
+
+logger = logging.getLogger(__name__)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Lazy imports — app starts even if packages are not installed yet.
@@ -80,10 +86,10 @@ class AnthropicProvider:
             )
         self._client = _anthropic.Anthropic(api_key=settings.ANTHROPIC_API_KEY)
 
-    def chat(self, messages: list, model: str, system: str = '') -> dict:
+    def chat(self, messages: list, model: str, system: str = '', json_mode: bool = False) -> dict:
         """
         Returns: {'text': str, 'input_tokens': int, 'output_tokens': int}
-        Token counts are from response.usage — used by views.py to log AiUsageLog.
+        json_mode is ignored — Claude follows JSON instructions without a special flag.
         """
         kwargs = {'model': model, 'max_tokens': settings.AI_MAX_TOKENS, 'messages': messages}
         if system:
@@ -113,18 +119,19 @@ class OpenAIProvider:
             )
         self._client = _openai.OpenAI(api_key=settings.OPENAI_API_KEY)
 
-    def chat(self, messages: list, model: str, system: str = '') -> dict:
+    def chat(self, messages: list, model: str, system: str = '', json_mode: bool = False) -> dict:
         """
         Returns: {'text': str, 'input_tokens': int, 'output_tokens': int}
-        Token counts are from response.usage — used by views.py to log AiUsageLog.
+        json_mode=True passes response_format={"type":"json_object"} to force JSON output.
         """
         all_messages = []
         if system:
             all_messages.append({'role': 'system', 'content': system})
         all_messages.extend(messages)
-        response = self._client.chat.completions.create(
-            model=model, messages=all_messages, max_tokens=settings.AI_MAX_TOKENS,
-        )
+        kwargs: dict = {'model': model, 'messages': all_messages, 'max_tokens': settings.AI_MAX_TOKENS}
+        if json_mode:
+            kwargs['response_format'] = {'type': 'json_object'}
+        response = self._client.chat.completions.create(**kwargs)
         return {
             'text':          response.choices[0].message.content,
             'input_tokens':  response.usage.prompt_tokens,
@@ -157,20 +164,19 @@ class GroqProvider:
             base_url='https://api.groq.com/openai/v1',
         )
 
-    def chat(self, messages: list, model: str, system: str = '') -> dict:
+    def chat(self, messages: list, model: str, system: str = '', json_mode: bool = False) -> dict:
         """
         Returns: {'text': str, 'input_tokens': int, 'output_tokens': int}
-        Token counts are from response.usage — used by views.py to log AiUsageLog.
+        json_mode=True passes response_format={"type":"json_object"} to force JSON output.
         """
         all_messages = []
         if system:
             all_messages.append({'role': 'system', 'content': system})
         all_messages.extend(messages)
-        response = self._client.chat.completions.create(
-            model=model,
-            messages=all_messages,
-            max_tokens=settings.AI_MAX_TOKENS,
-        )
+        kwargs: dict = {'model': model, 'messages': all_messages, 'max_tokens': settings.AI_MAX_TOKENS}
+        if json_mode:
+            kwargs['response_format'] = {'type': 'json_object'}
+        response = self._client.chat.completions.create(**kwargs)
         return {
             'text':          response.choices[0].message.content,
             'input_tokens':  response.usage.prompt_tokens,
@@ -266,7 +272,12 @@ ACTION_DEFINITIONS: dict[str, dict] = {
         'category':    'text',
     },
     'bullet_points': {
-        'system':      'Convert the following text into a clean, structured bullet-point list.',
+        'system':      (
+            'Convert the following text into a clean bullet list. '
+            'Use the • character (Unicode bullet) for each item, one per line. '
+            'Do NOT use markdown *, **, or - characters. '
+            'Return only the bullet list, nothing else.'
+        ),
         'tier':        'fast',
         'label':       'Bullet Points',
         'description': 'Convert to bullets',
@@ -304,28 +315,51 @@ ACTION_DEFINITIONS: dict[str, dict] = {
 
     # ── Code actions — add more code actions here following the same pattern ──
     'explain_code': {
-        'system':      'Explain what this code does in plain English. Be clear and concise.',
+        'system':      (
+            'Explain what this code does in plain English. '
+            'Be clear and concise — describe the purpose, inputs, outputs, and any important logic. '
+            'Do not include the code itself in the response.'
+        ),
         'tier':        'default',
         'label':       'Explain Code',
         'description': 'Understand what the code does',
         'category':    'code',
     },
     'add_comments': {
-        'system':      'Add clear, helpful inline comments to this code. Return only the commented code.',
+        'system':      (
+            'Add clear, helpful inline comments to this code. '
+            'CRITICAL RULES: '
+            '(1) Return ONLY the code — no markdown fences, no backticks, no preamble. '
+            '(2) Use the correct comment syntax for the language. '
+            '(3) Do NOT change any logic, variable names, or structure. '
+            '(4) Add a comment above each logical section and for any non-obvious line.'
+        ),
         'tier':        'default',
         'label':       'Add Comments',
         'description': 'Document the code',
         'category':    'code',
     },
     'fix_code': {
-        'system':      'Find and fix bugs in this code. Explain briefly what you fixed, then return the corrected code.',
+        'system':      (
+            'Find and fix all bugs in this code. '
+            'CRITICAL RULES: '
+            '(1) Return ONLY the fixed code — no markdown fences, no backticks, no preamble. '
+            '(2) Use a short inline comment (correct syntax for the language) above each fix to explain what was wrong. '
+            '(3) Do NOT refactor or change anything that is not a bug.'
+        ),
         'tier':        'default',
         'label':       'Fix Code',
         'description': 'Find and fix bugs',
         'category':    'code',
     },
     'improve_code': {
-        'system':      'Improve this code for readability, performance, and best practices. Return improved code with a brief explanation.',
+        'system':      (
+            'Improve this code for readability, performance, and best practices. '
+            'CRITICAL RULES: '
+            '(1) Return ONLY the improved code — no markdown fences, no backticks, no preamble. '
+            '(2) Use correct comment syntax for the language to briefly note significant changes. '
+            '(3) Preserve the overall structure and intent of the original code.'
+        ),
         'tier':        'default',
         'label':       'Improve Code',
         'description': 'Optimize and clean up',
@@ -335,6 +369,34 @@ ACTION_DEFINITIONS: dict[str, dict] = {
 
 # Used only by run_chat() — not a user-facing action
 _CHAT_SYSTEM_PROMPT = "You are a helpful AI assistant in a notes app. Answer the user's question clearly."
+
+# Comment syntax per language — used to give language-aware instructions to code actions
+_COMMENT_SYNTAX: dict[str, str] = {
+    'python':     '# (hash)',
+    'javascript': '// (double slash) or /* block */',
+    'typescript': '// (double slash) or /* block */',
+    'go':         '// (double slash)',
+    'rust':       '// (double slash)',
+    'java':       '// (double slash) or /* block */',
+    'cpp':        '// (double slash) or /* block */',
+    'css':        '/* block comment */',
+    'html':       '<!-- comment -->',
+    'sql':        '-- (double dash)',
+    'bash':       '# (hash)',
+    'yaml':       '# (hash)',
+    'docker':     '# (hash)',
+    'markdown':   '<!-- comment -->',
+    'ruby':       '# (hash)',
+    'php':        '// (double slash) or # (hash)',
+    'swift':      '// (double slash)',
+    'kotlin':     '// (double slash)',
+    'r':          '# (hash)',
+    'scala':      '// (double slash)',
+}
+
+
+def _get_comment_syntax(lang: str) -> str:
+    return _COMMENT_SYNTAX.get(lang.lower(), '// (double slash)')
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -499,7 +561,26 @@ def run_action(action_type: str, content: str, extra: dict | None = None, user=N
             f"Unknown action '{action_type}'. Valid: {list(ACTION_DEFINITIONS.keys())}"
         )
 
-    system   = defn['system'].format(**(extra or {})) if extra else defn['system']
+    system = defn['system'].format(**(extra or {})) if extra else defn['system']
+
+    # Prepend language-aware constraints for code actions when a language is provided
+    if defn.get('category') == 'code' and extra and extra.get('language'):
+        lang    = str(extra['language'])
+        comment = _get_comment_syntax(lang)
+        if action_type == 'explain_code':
+            # Explanation returns prose, not code — only inject language context
+            system = f"The code is written in {lang}. " + system
+        else:
+            system = (
+                f"CODE LANGUAGE: {lang}\n"
+                f"COMMENT SYNTAX: {comment}\n"
+                f"ABSOLUTE RULES:\n"
+                f"- Use ONLY {comment} for any comments — never any other comment style\n"
+                f"- Never break the {lang} syntax\n"
+                f"- Preserve all variable names, function signatures, and logic unless fixing a bug\n"
+                f"- Return ONLY raw {lang} code — NO markdown fences, NO backticks, NO explanatory text before or after\n\n"
+            ) + system
+
     model    = get_model(defn.get('tier', 'default'))
     provider = get_provider()
 
@@ -566,3 +647,262 @@ def run_chat(messages: list, page_context: str = '', user=None, page_id=None) ->
             save_chat_messages(user, page_id, last_user_msg, reply)
 
     return reply, result['input_tokens'], result['output_tokens']
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# AI Agent — structured JSON responses for action proposals
+#
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# HOW TO ADD A NEW ACTION:
+#   1. Add it to AGENT_ACTIONS below (description only, for documentation)
+#   2. Add its JSON shape to AGENT_SYSTEM_PROMPT
+#   3. Add the API endpoint in views.py
+#   4. Add the frontend handler in AiPanel.tsx
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# ─────────────────────────────────────────────────────────────────────────────
+
+AGENT_ACTIONS: dict[str, str] = {
+    'create_page':    'Create a new page with title and blocks',
+    'add_blocks':     'Add blocks to the current page',
+    'create_mindmap': 'Create a mind map on the canvas',
+    'read_page':      'Read and summarize a page (no confirmation needed)',
+    'remove_blocks':  'Remove specific blocks from the current page',
+    'web_search':     'Search the web for current information (auto-executed, no approval needed)',
+}
+
+AGENT_SYSTEM_PROMPT = """You are an AI assistant inside SecondBrain workspace app.
+You MUST respond with valid JSON only. Never respond with plain text.
+
+RESPONSE FORMAT — choose one:
+
+For normal conversation:
+{"type":"message","message":"your response here"}
+
+For creating a new page (when user asks to create/make/build a page or document):
+{"type":"action","action":"create_page","params":{"title":"Page Title","blocks":[{"block_type":"heading1","content":{"text":"Title"}},{"block_type":"paragraph","content":{"text":"Content"}}]},"message":"I'll create a page called 'Title' with X sections. Approve?"}
+
+For adding blocks to current page:
+{"type":"action","action":"add_blocks","params":{"blocks":[{"block_type":"paragraph","content":{"text":"content"}}]},"message":"I'll add X blocks to your page. Approve?"}
+
+For creating a mind map:
+{"type":"action","action":"create_mindmap","params":{"nodes":[{"label":"Central Idea"},{"label":"Branch"}]},"message":"I'll create a mind map. Approve?"}
+
+For removing specific blocks from current page:
+{"type":"action","action":"remove_blocks","params":{"block_ids":["uuid1","uuid2"],"reason":"Removing duplicate content"},"message":"I'll remove 2 blocks from your page. This cannot be undone. Approve?"}
+
+For searching the web (current events, news, prices, facts, real-time data):
+{"type":"action","action":"web_search","params":{"query":"specific search query"},"message":"Searching the web for..."}
+
+STRICT RULES:
+1. ALWAYS output raw JSON — no markdown, no backticks, no explanation outside JSON
+2. The "message" field is shown to user — make it friendly and clear
+3. For create/modify/delete actions always use type=action (needs user approval)
+4. For questions/summaries use type=message
+5. Available block types: paragraph, heading1, heading2, heading3, bullet_item, numbered_item, todo_item, code, quote, callout, divider
+6. For code: {"block_type":"code","content":{"code":"print('hello')","language":"python"}}
+7. For remove_blocks you MUST list exact block IDs from the page block list provided below
+8. NEVER remove blocks unless user explicitly asks to delete/remove content
+9. Always explain what will be removed in the message field
+10. Use web_search whenever the user asks about current events, recent news, live prices, today's date, or any information that may be outdated in your training data
+11. web_search is AUTO-EXECUTED immediately — never ask the user for permission before searching; just do it
+
+Current page content and block IDs will be provided if available. Use them for context."""
+
+
+def _parse_json_response(text: str) -> dict:
+    """
+    Extract and parse a JSON object from an AI response string.
+    Tries three strategies before falling back to a plain-message wrapper.
+    Extracted so it can be reused for both the first and second (post-search) AI calls.
+    """
+    text = text.strip()
+
+    # Strategy 1: direct JSON parse
+    try:
+        return json.loads(text)
+    except (json.JSONDecodeError, ValueError):
+        pass
+
+    # Strategy 2: JSON inside markdown fence ```json … ```
+    m = re.search(r'```(?:json)?\s*(\{.*?\})\s*```', text, re.DOTALL)
+    if m:
+        try:
+            return json.loads(m.group(1))
+        except (json.JSONDecodeError, ValueError):
+            pass
+
+    # Strategy 3: first { to last }
+    m = re.search(r'\{.*\}', text, re.DOTALL)
+    if m:
+        try:
+            return json.loads(m.group(0))
+        except (json.JSONDecodeError, ValueError):
+            pass
+
+    # Fallback: wrap plain text as a message
+    return {'type': 'message', 'message': text}
+
+
+def _normalise_parsed(parsed: dict, raw_text: str) -> dict:
+    """Guarantee minimum required keys and normalise data/params naming."""
+    if 'type' not in parsed:
+        parsed['type'] = 'message'
+    if 'message' not in parsed:
+        parsed['message'] = raw_text
+    if 'data' in parsed and 'params' not in parsed:
+        parsed['params'] = parsed.pop('data')
+    return parsed
+
+
+def run_agent_chat(
+    messages: list,
+    page_context: str = '',
+    user=None,
+    page_id: str | None = None,
+) -> tuple[dict, int, int]:
+    """
+    Enhanced chat that returns a structured JSON response for agent actions.
+
+    messages     — new messages for this turn [{role, content}, ...]
+    page_context — optional text from the current page (prepended to system prompt)
+    user         — if provided: quota checked, history loaded/saved
+    page_id      — required together with user for history persistence
+
+    Returns (parsed_response: dict, input_tokens: int, output_tokens: int).
+
+    parsed_response always contains at minimum:
+      { "type": "message"|"action", "message": str }
+
+    For type="action" it also contains:
+      { "action": str, "data": dict }
+
+    HOW HISTORY WORKS:
+      Same as run_chat() — DB history is prepended, then saved after response.
+
+    FALLBACK:
+      If the AI returns non-JSON text, it is wrapped as
+      { "type": "message", "message": <raw text> } so the frontend
+      always receives a valid object.
+    """
+    if user:
+        check_quota(user)
+
+    # Build system prompt with optional page context
+    system = AGENT_SYSTEM_PROMPT
+    if page_context:
+        system += (
+            f"\n\nCurrent page content (use as context when relevant):\n"
+            f"--- PAGE CONTENT ---\n{page_context[:3000]}\n--- END ---"
+        )
+
+    # Include block IDs so AI can reference them for remove_blocks
+    if page_id:
+        from Apps.blocks.models import Block as _Block
+        page_blocks = _Block.objects.filter(
+            page_id=page_id,
+            is_deleted=False,
+            doc_visible=True,
+        ).order_by('order')[:50]
+
+        blocks_text = '\n'.join([
+            f"[ID:{b.id}] [{b.block_type}] {str(b.content.get('text', b.content.get('code', '')))[:100]}"
+            for b in page_blocks
+        ])
+        if blocks_text:
+            system += f"\n\n=== CURRENT PAGE BLOCKS (with IDs) ===\n{blocks_text}\n=== END ==="
+
+    # Prepend persistent history (same pattern as run_chat)
+    if user and page_id:
+        db_history    = get_chat_history(user, page_id, limit=20)
+        all_messages  = db_history + messages
+    else:
+        all_messages  = messages
+
+    provider = get_provider()
+    # Force JSON output mode for OpenAI/Groq — Anthropic (Claude) follows instructions without it
+    use_json_mode = not isinstance(provider, AnthropicProvider)
+    try:
+        result = provider.chat(
+            messages=all_messages,
+            model=get_model('default'),
+            system=system,
+            json_mode=use_json_mode,
+        )
+    except Exception:
+        logger.exception('run_agent_chat: provider.chat() failed')
+        raise
+
+    raw_text      = result['text']
+    input_tokens  = result['input_tokens']
+    output_tokens = result['output_tokens']
+
+    # ── Parse initial response ───────────────────────────────────────────────
+    parsed = _normalise_parsed(_parse_json_response(raw_text), raw_text)
+
+    # ── Auto-execute web_search (no user approval required) ──────────────────
+    # If the AI wants to search the web, run the search server-side and feed
+    # results back into a second AI call so the user receives a final answer.
+    if parsed.get('type') == 'action' and parsed.get('action') == 'web_search':
+        try:
+            from .web_search import search_web
+            query   = str((parsed.get('params') or {}).get('query', '')).strip()
+            results = search_web(query, max_results=4) if query else []
+
+            if results:
+                search_lines = '\n'.join(
+                    f"- {r['title']}: {r['snippet']}"
+                    for r in results
+                )
+                search_user_msg = (
+                    f"[Web search completed for \"{query}\". Results:\n{search_lines}\n\n"
+                    "Now answer the user's original question using these results. "
+                    "Do NOT search again — respond with a direct answer message.]"
+                )
+            else:
+                search_user_msg = (
+                    f"[Web search for \"{query}\" returned no results. "
+                    "Answer from your training knowledge and be transparent about uncertainty. "
+                    "Do NOT search again.]"
+                )
+
+            # Inject the AI's web_search response + search results as conversation turns
+            # so the AI knows it already searched and must now give a final answer.
+            second_messages = all_messages + [
+                {'role': 'assistant', 'content': raw_text},
+                {'role': 'user',      'content': search_user_msg},
+            ]
+
+            result2 = provider.chat(
+                messages=second_messages,
+                model=get_model('default'),
+                system=system,
+                json_mode=use_json_mode,
+            )
+            input_tokens  += result2['input_tokens']
+            output_tokens += result2['output_tokens']
+            parsed = _normalise_parsed(_parse_json_response(result2['text']), result2['text'])
+
+            # Guard: if the AI still returns web_search despite having results, force a message
+            if parsed.get('type') == 'action' and parsed.get('action') == 'web_search':
+                parsed = {
+                    'type':    'message',
+                    'message': "I searched the web but couldn't formulate a clear answer. Please try rephrasing your question.",
+                }
+
+        except Exception:
+            logger.exception('run_agent_chat: web_search auto-execution failed')
+            parsed = {
+                'type':    'message',
+                'message': "I tried to search the web but ran into an issue. Let me answer from what I know instead.",
+            }
+
+    # ── Persist exchange to chat history ─────────────────────────────────────
+    if user and messages:
+        last_user_msg = next(
+            (m['content'] for m in reversed(messages) if m.get('role') == 'user'),
+            '',
+        )
+        if last_user_msg:
+            save_chat_messages(user, page_id, last_user_msg, parsed['message'])
+
+    return parsed, input_tokens, output_tokens

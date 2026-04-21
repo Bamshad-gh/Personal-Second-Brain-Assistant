@@ -5,43 +5,60 @@
  *          with a draggable divider to resize proportions.
  *
  * Data model:
- *   column_container  block.content = { widths: [50, 50] }   (percentages, sum = 100)
+ *   column_container  block.content = { widths: [50, 50] }
  *     └── column      (child, order 1.0)
  *           └── any doc block (grandchild)
  *     └── column      (child, order 2.0)
  *           └── any doc block (grandchild)
  *
- * Resize:
- *   Pointer is captured on the divider (setPointerCapture) so dragging outside
- *   the element still works. Width delta is applied live via local state.
- *   onSave is called on pointerUp with the final widths array.
+ * Block interactions inside columns:
+ *   Each block inside a column has:
+ *     - data-blockid  attribute so DocumentEditor's global pointermove can
+ *       target it for drag-and-drop (including dragging OUT of the column).
+ *     - Edge-proximity insertion lines (same 12px EDGE_THRESHOLD as DocumentEditor).
+ *     - A left gutter with a ⠿ drag handle that calls onBlockDragStart, which
+ *       starts DocumentEditor's pointer-capture drag state.
+ *     - Drop indicator (border-t-2 / border-b-2) when DocumentEditor reports
+ *       this block as the drag-over target.
  *
- * Recursive rendering:
- *   Each column's child blocks are filtered from allBlocks (b.parent === col.id)
- *   and rendered via BlockRenderer — the same component used at the top level.
- *   This means columns support all block types including nested column_containers.
+ * Drag out of column:
+ *   DocumentEditor's global pointermove finds column-internal blocks via
+ *   data-blockid. On pointerup, if source.parent !== target.parent, it calls
+ *   onUpdateBlock(sourceId, { parent: targetParent, order }) to move the
+ *   block atomically. No extra endpoint needed.
  *
- * Props passed through to inner BlockRenderers are the same callbacks that
- * DocumentEditor wires up, so saves/deletes/enter/slash all work normally
- * inside columns.
+ * Divider resize:
+ *   setPointerCapture on the divider so dragging outside the element works.
+ *   Width delta applied live; onSave fires on pointerUp.
+ *
+ * Adding blocks inside a column:
+ *   Insertion buttons call onBlockCreate(afterBlockId, 'paragraph', nextBlock, col.id).
+ *   DocumentEditor's handleCreateBlockInColumn forwards this to onCreateBlock
+ *   with parentId = col.id so the new block lands inside the column.
  */
 
 'use client';
 
 import { useState, useRef, useCallback } from 'react';
-import type { Block }                    from '@/types';
+import type { Block, BlockType }         from '@/types';
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// CONSTANTS
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+const EDGE_THRESHOLD = 12; // px — same as DocumentEditor
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // TYPES
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-// Lazy import type to avoid circular dependency (BlockRenderer imports this file)
+// Lazy type to break circular import (BlockRenderer imports this file)
 type BlockRendererType = React.ComponentType<import('./BlockRenderer').BlockRendererProps>;
 
 export interface ColumnContainerBlockProps {
-  block:       Block;      // the column_container block
-  allBlocks:   Block[];    // ALL page blocks — used to find column + grandchild blocks
-  onSave:      (content: Record<string, unknown>) => void;
+  block:      Block;
+  allBlocks:  Block[];
+  onSave:     (content: Record<string, unknown>) => void;
 
   // ── Pass-through props for nested BlockRenderers ──────────────────────────
   onBlockSave:               (blockId: string, content: Record<string, unknown>) => void;
@@ -55,8 +72,18 @@ export interface ColumnContainerBlockProps {
   selectedBlockId:           string | null;
   readOnly?:                 boolean;
 
-  // Injected by BlockRenderer to avoid circular static import
+  // Injected by BlockRenderer to break circular static import
   BlockRenderer:             BlockRendererType;
+
+  // ── Column interaction props (from DocumentEditor via BlockRenderer) ───────
+  onBlockCreate?:       (afterBlockId: string | null, blockType: BlockType, nextBlock: Block | null, columnId: string) => void;
+  onBlockDragStart?:    (blockId: string) => void;
+  onBlockContextMenu?:  (blockId: string, anchor: HTMLElement) => void;
+  isDragging?:          boolean;
+  dragOverBlockId?:     string | null;
+  dragOverPos?:         'top' | 'bottom';
+  focusedBlockId?:      string | null;
+  focusAtEndBlockId?:   string | null;
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -78,6 +105,14 @@ export function ColumnContainerBlock({
   selectedBlockId,
   readOnly = false,
   BlockRenderer,
+  onBlockCreate,
+  onBlockDragStart,
+  onBlockContextMenu,
+  isDragging        = false,
+  dragOverBlockId   = null,
+  dragOverPos       = 'bottom',
+  focusedBlockId    = null,
+  focusAtEndBlockId = null,
 }: ColumnContainerBlockProps) {
 
   // ── Column children (sorted by order) ────────────────────────────────────
@@ -85,68 +120,70 @@ export function ColumnContainerBlock({
     .filter((b) => b.parent === block.id && b.block_type === 'column' && !b.is_deleted)
     .sort((a, b) => a.order - b.order);
 
-  // ── Widths state — initialised from block.content.widths ─────────────────
+  // ── Widths state ──────────────────────────────────────────────────────────
   const rawWidths = Array.isArray(block.content.widths)
     ? (block.content.widths as number[])
     : columns.map(() => 100 / Math.max(columns.length, 1));
 
   const [widths, setWidths] = useState<number[]>(rawWidths);
 
-  // Sync widths when block prop changes (e.g. after server invalidation)
-  const prevWidthsKey = rawWidths.join(',');
-  const lastSyncedKey = useRef(prevWidthsKey);
-  if (lastSyncedKey.current !== prevWidthsKey) {
-    lastSyncedKey.current = prevWidthsKey;
+  // Sync when server invalidates
+  const lastWidthsKey = useRef(rawWidths.join(','));
+  const currentKey    = rawWidths.join(',');
+  if (lastWidthsKey.current !== currentKey) {
+    lastWidthsKey.current = currentKey;
     setWidths(rawWidths);
   }
 
-  // ── Divider drag ──────────────────────────────────────────────────────────
-  const containerRef   = useRef<HTMLDivElement>(null);
-  const dragIndexRef   = useRef<number | null>(null);   // index of divider being dragged
-  const dragStartXRef  = useRef<number>(0);
-  const dragStartWidths = useRef<number[]>([]);
+  // ── Column-internal insertion indicator ──────────────────────────────────
+  // One shared state for the whole container — only one block can be near-edge
+  // at any time.
+  const [colInsertHoverId, setColInsertHoverId] = useState<string | null>(null);
+  const [colInsertHalf,    setColInsertHalf]    = useState<'top' | 'bottom'>('bottom');
 
-  const onDividerPointerDown = useCallback((e: React.PointerEvent, dividerIndex: number) => {
+  // ── Divider drag ──────────────────────────────────────────────────────────
+  const containerRef      = useRef<HTMLDivElement>(null);
+  const dividerIndexRef   = useRef<number | null>(null);
+  const dividerStartXRef  = useRef<number>(0);
+  const dividerStartWidths = useRef<number[]>([]);
+
+  const onDividerPointerDown = useCallback((e: React.PointerEvent, idx: number) => {
     if (readOnly) return;
     e.preventDefault();
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
-    dragIndexRef.current    = dividerIndex;
-    dragStartXRef.current   = e.clientX;
-    dragStartWidths.current = [...widths];
+    dividerIndexRef.current    = idx;
+    dividerStartXRef.current   = e.clientX;
+    dividerStartWidths.current = [...widths];
   }, [readOnly, widths]);
 
   const onDividerPointerMove = useCallback((e: React.PointerEvent) => {
-    if (dragIndexRef.current === null || !containerRef.current) return;
+    if (dividerIndexRef.current === null || !containerRef.current) return;
     const containerWidth = containerRef.current.getBoundingClientRect().width;
     if (!containerWidth) return;
 
-    const deltaX    = e.clientX - dragStartXRef.current;
-    const deltaPct  = (deltaX / containerWidth) * 100;
-    const idx       = dragIndexRef.current;
+    const deltaX   = e.clientX - dividerStartXRef.current;
+    const deltaPct = (deltaX / containerWidth) * 100;
+    const idx      = dividerIndexRef.current;
+    const MIN      = 10;
 
-    const newWidths = [...dragStartWidths.current];
-    const MIN_WIDTH = 10; // minimum column width in percent
+    const next = [...dividerStartWidths.current];
+    next[idx]     = Math.max(MIN, dividerStartWidths.current[idx]     + deltaPct);
+    next[idx + 1] = Math.max(MIN, dividerStartWidths.current[idx + 1] - deltaPct);
 
-    newWidths[idx]     = Math.max(MIN_WIDTH, dragStartWidths.current[idx]     + deltaPct);
-    newWidths[idx + 1] = Math.max(MIN_WIDTH, dragStartWidths.current[idx + 1] - deltaPct);
+    const total   = next[idx] + next[idx + 1];
+    next[idx]     = Math.min(total - MIN, next[idx]);
+    next[idx + 1] = total - next[idx];
 
-    // Clamp so sum stays 100
-    const total = newWidths[idx] + newWidths[idx + 1];
-    newWidths[idx]     = Math.min(total - MIN_WIDTH, newWidths[idx]);
-    newWidths[idx + 1] = total - newWidths[idx];
-
-    setWidths(newWidths);
+    setWidths(next);
   }, []);
 
   const onDividerPointerUp = useCallback((e: React.PointerEvent) => {
-    if (dragIndexRef.current === null) return;
+    if (dividerIndexRef.current === null) return;
     (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
-    dragIndexRef.current = null;
-
-    // Persist the new widths to the backend
-    setWidths((current) => {
-      onSave({ widths: current });
-      return current;
+    dividerIndexRef.current = null;
+    setWidths((cur) => {
+      onSave({ widths: cur });
+      return cur;
     });
   }, [onSave]);
 
@@ -165,68 +202,178 @@ export function ColumnContainerBlock({
   return (
     <div
       ref={containerRef}
-      className="flex w-full items-stretch gap-0 my-1"
+      className="col-container-bg flex w-full items-stretch gap-0 my-2 rounded-lg"
     >
       {columns.map((col, colIdx) => {
-        const colWidth = widths[colIdx] ?? (100 / columns.length);
-
-        // Blocks that live directly inside this column
+        const colWidth  = widths[colIdx] ?? (100 / columns.length);
         const colBlocks = allBlocks
           .filter((b) => b.parent === col.id && b.doc_visible && !b.is_deleted)
           .sort((a, b) => a.order - b.order);
 
         return (
-          <div key={col.id} className="flex items-stretch gap-0" style={{ width: `${colWidth}%` }}>
+          <div key={col.id} className="flex items-stretch" style={{ width: `${colWidth}%` }}>
 
-            {/* ── Column content ─────────────────────────────────────────── */}
-            <div className="flex-1 min-w-0 px-2 py-1">
-              {colBlocks.length === 0 ? (
-                <div className="min-h-[2rem] rounded border border-dashed border-neutral-800
-                                text-xs text-neutral-700 flex items-center justify-center
-                                select-none">
-                  empty column
-                </div>
-              ) : (
-                colBlocks.map((childBlock, idx) => (
-                  <BlockRenderer
+            {/* ── Column content area ───────────────────────────────────────── */}
+            <div className="flex-1 min-w-0 px-3 py-2 flex flex-col">
+
+              {/* Blocks inside this column */}
+              {colBlocks.map((childBlock, idx) => {
+                const isColDragOver = dragOverBlockId === childBlock.id;
+                const showInsert    = !readOnly && !isDragging
+                  && colInsertHoverId === childBlock.id && colInsertHalf === 'bottom';
+
+                return (
+                  <div
                     key={childBlock.id}
-                    block={childBlock}
-                    index={idx}
-                    allBlocks={allBlocks}
-                    onSave={onBlockSave}
-                    onEnter={onBlockEnter}
-                    onDelete={onBlockDelete}
-                    onConvertToParagraph={onBlockConvertToParagraph}
-                    onFocus={onBlockFocus}
-                    onBlur={onBlockBlur}
-                    onSlash={onBlockSlash}
-                    onTextChange={onBlockTextChange}
-                    isSelected={selectedBlockId === childBlock.id}
-                    readOnly={readOnly}
-                  />
-                ))
+                    data-blockid={childBlock.id}
+                    className={[
+                      'group/colblock relative flex items-start py-0.5',
+                      isColDragOver && dragOverPos === 'top'    ? 'border-t-2 border-violet-500' : '',
+                      isColDragOver && dragOverPos === 'bottom' ? 'border-b-2 border-violet-500' : '',
+                    ].join(' ')}
+                    style={(childBlock.bg_color || childBlock.text_color) ? {
+                      ...(childBlock.bg_color   ? { backgroundColor: childBlock.bg_color, borderRadius: '4px' } : {}),
+                      ...(childBlock.text_color ? { color: childBlock.text_color } : {}),
+                    } : undefined}
+                    onMouseMove={(e) => {
+                      if (isDragging) return;
+                      const rect      = e.currentTarget.getBoundingClientRect();
+                      const distToBot = rect.bottom - e.clientY;
+
+                      if (distToBot <= EDGE_THRESHOLD) {
+                        if (colInsertHoverId !== childBlock.id || colInsertHalf !== 'bottom') {
+                          setColInsertHoverId(childBlock.id);
+                          setColInsertHalf('bottom');
+                        }
+                      } else if (colInsertHoverId === childBlock.id) {
+                        setColInsertHoverId(null);
+                      }
+                    }}
+                    onMouseLeave={() => {
+                      if (colInsertHoverId === childBlock.id) setColInsertHoverId(null);
+                    }}
+                  >
+                    {/* ── Drag handle — inline, left of content ────────────── */}
+                    {!readOnly && (onBlockDragStart || onBlockContextMenu) && (
+                      <div
+                        className="block-drag-handle mt-0.5 mr-1 flex h-5 w-4 shrink-0
+                                   cursor-grab select-none items-center justify-center rounded
+                                   text-[11px] text-neutral-600
+                                   opacity-0 transition-all duration-150
+                                   group-hover/colblock:opacity-100
+                                   hover:bg-neutral-700/60 hover:text-neutral-300
+                                   active:cursor-grabbing"
+                        title="Drag · Click for options"
+                        onPointerDown={(e) => {
+                          e.stopPropagation();
+                          e.preventDefault();
+                          onBlockDragStart?.(childBlock.id);
+                        }}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onBlockContextMenu?.(childBlock.id, e.currentTarget as HTMLElement);
+                        }}
+                      >⠿</div>
+                    )}
+
+                    {/* ── Block content ────────────────────────────────────── */}
+                    <div className="min-w-0 flex-1">
+                      <BlockRenderer
+                        block={childBlock}
+                        index={idx}
+                        allBlocks={allBlocks}
+                        onSave={onBlockSave}
+                        onEnter={onBlockEnter}
+                        onDelete={onBlockDelete}
+                        onConvertToParagraph={onBlockConvertToParagraph}
+                        onFocus={onBlockFocus}
+                        onBlur={onBlockBlur}
+                        onSlash={onBlockSlash}
+                        onTextChange={onBlockTextChange}
+                        isSelected={selectedBlockId === childBlock.id}
+                        autoFocus={focusedBlockId === childBlock.id}
+                        focusAtEnd={focusAtEndBlockId === childBlock.id}
+                        readOnly={readOnly}
+                        onBlockCreate={onBlockCreate}
+                        onBlockDragStart={onBlockDragStart}
+                        isDragging={isDragging}
+                        dragOverBlockId={dragOverBlockId}
+                        dragOverPos={dragOverPos}
+                        focusedBlockId={focusedBlockId}
+                        focusAtEndBlockId={focusAtEndBlockId}
+                      />
+                    </div>
+
+                    {/* ── Bottom insertion line (hover near bottom edge) ────── */}
+                    {showInsert && (
+                      <button
+                        type="button"
+                        aria-label="Add block below"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          const next = colBlocks[idx + 1] ?? null;
+                          onBlockCreate?.(childBlock.id, 'paragraph', next, col.id);
+                          setColInsertHoverId(null);
+                        }}
+                        className="pointer-events-auto absolute bottom-0 left-0 right-0 z-20
+                                   h-3 translate-y-1/2 flex cursor-pointer items-center
+                                   outline-none animate-fade-in"
+                      >
+                        <span className="pointer-events-none relative z-10 flex h-4 w-4 shrink-0
+                                         items-center justify-center rounded-full border-2
+                                         border-violet-500 bg-neutral-950 text-[10px] font-bold
+                                         leading-none text-violet-400">+</span>
+                        <span className="pointer-events-none h-px flex-1 rounded-full bg-violet-500/50" />
+                      </button>
+                    )}
+                  </div>
+                );
+              })}
+
+              {/* ── Empty column: click-anywhere to add first block ───────────── */}
+              {colBlocks.length === 0 && !readOnly && onBlockCreate && (
+                <div
+                  className="flex flex-1 min-h-12 cursor-pointer items-center justify-center
+                             rounded border border-dashed border-neutral-800 text-xs
+                             text-neutral-700 select-none transition-colors
+                             hover:border-violet-500/30 hover:text-violet-600/70"
+                  onClick={() => onBlockCreate(null, 'paragraph', null, col.id)}
+                >
+                  <span className="text-base leading-none mr-1">+</span> Write something
+                </div>
+              )}
+
+              {/* ── Click below last block to append ─────────────────────────── */}
+              {colBlocks.length > 0 && !readOnly && onBlockCreate && (
+                <div
+                  className="mt-0.5 min-h-4 flex-1 cursor-text"
+                  onClick={() => {
+                    const last = colBlocks[colBlocks.length - 1];
+                    onBlockCreate(last?.id ?? null, 'paragraph', null, col.id);
+                  }}
+                />
               )}
             </div>
 
-            {/* ── Resize divider (between columns, not after last) ──────── */}
+            {/* ── Resize divider (between columns, not after last) ──────────── */}
             {colIdx < columns.length - 1 && (
               <div
                 className={[
-                  'w-1 flex-shrink-0 relative group/divider',
+                  'w-1.5 shrink-0 relative group/divider',
                   readOnly ? 'cursor-default' : 'cursor-col-resize',
                 ].join(' ')}
                 onPointerDown={(e) => onDividerPointerDown(e, colIdx)}
                 onPointerMove={onDividerPointerMove}
                 onPointerUp={onDividerPointerUp}
               >
-                {/* Visible track — thin line, widens on hover */}
                 <div className={[
-                  'absolute inset-y-0 left-1/2 -translate-x-1/2 w-px',
-                  'bg-neutral-700 transition-all duration-150',
-                  !readOnly && 'group-hover/divider:w-1 group-hover/divider:bg-violet-500/60',
+                  'absolute inset-y-3 left-1/2 -translate-x-1/2 w-px rounded-full',
+                  'bg-neutral-700/60 transition-all duration-150',
+                  !readOnly
+                    ? 'group-hover/divider:w-0.75 group-hover/divider:bg-violet-500/60 group-hover/divider:shadow-[0_0_6px_rgba(139,92,246,0.35)]'
+                    : '',
                 ].join(' ')} />
-                {/* Wider invisible hit area so grabbing is easy */}
-                <div className="absolute inset-y-0 -left-1.5 -right-1.5" />
+                <div className="absolute inset-y-0 -left-1 -right-1" />
               </div>
             )}
           </div>

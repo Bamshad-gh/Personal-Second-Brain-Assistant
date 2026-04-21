@@ -54,8 +54,8 @@ class UserSerializer(serializers.ModelSerializer):
     class Meta:
         model  = User
         fields = ['id', 'email', 'display_name',
-                  'avatar', 'created_at']
-        read_only_fields = ['id', 'created_at']
+                  'avatar', 'created_at', 'is_staff']
+        read_only_fields = ['id', 'created_at', 'is_staff']
 
 class UpdateProfileSerializer(serializers.ModelSerializer):
     """Write serializer for profile updates — intentionally limited fields."""

@@ -6,6 +6,7 @@ from .views import (
     WorkspacePagesView,
     WorkspaceStatsView,
     SeedTemplatesView,
+    WorkspaceContextView,
 )
 
 urlpatterns = [
@@ -23,4 +24,7 @@ urlpatterns = [
 
     # Seed built-in page-type templates (idempotent)
     path('<uuid:pk>/seed-templates/', SeedTemplatesView.as_view(), name='workspace-seed-templates'),
+
+    # Global AI assistant context — concatenated page text for the workspace
+    path('<uuid:pk>/context/', WorkspaceContextView.as_view(), name='workspace-context'),
 ]

@@ -26,6 +26,7 @@
 
 import { useState, useRef }        from 'react';
 import { createLowlight, common }  from 'lowlight';
+import { BlockAiActions }          from './BlockAiActions';
 import type { Block }              from '@/types';
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -117,6 +118,8 @@ export function CodeBlock({ block, onSave, onDelete, readOnly = false }: CodeBlo
   const [language,  setLanguage]  = useState(String(block.content.language ?? 'plaintext'));
   const [copied,    setCopied]    = useState(false);
   const [isFocused, setIsFocused] = useState(false);
+  const [aiOpen,    setAiOpen]    = useState(false);
+  const [aiAnchor,  setAiAnchor]  = useState<HTMLElement | null>(null);
 
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const textareaRef  = useRef<HTMLTextAreaElement>(null);
@@ -184,7 +187,7 @@ export function CodeBlock({ block, onSave, onDelete, readOnly = false }: CodeBlo
   return (
     <div className="group relative my-3 overflow-hidden rounded-xl border border-neutral-700 bg-neutral-900 font-mono text-sm">
 
-      {/* ── Header: language selector + copy button ───────────────────────── */}
+      {/* ── Header: language selector + AI button + copy button ─────────── */}
       <div className="flex items-center justify-between border-b border-neutral-700 bg-neutral-800/60 px-3 py-1.5">
         <select
           value={language}
@@ -197,14 +200,60 @@ export function CodeBlock({ block, onSave, onDelete, readOnly = false }: CodeBlo
           ))}
         </select>
 
-        <button
-          type="button"
-          onClick={handleCopy}
-          className="text-xs text-neutral-500 opacity-0 transition-all hover:text-neutral-200 group-hover:opacity-100"
-        >
-          {copied ? '✓ Copied' : 'Copy'}
-        </button>
+        <div className="flex items-center gap-2">
+          {/* AI quick-actions button */}
+          {!readOnly && (
+            <button
+              type="button"
+              title="AI actions"
+              onClick={(e) => {
+                e.stopPropagation();
+                if (aiOpen) {
+                  setAiOpen(false);
+                  setAiAnchor(null);
+                } else {
+                  setAiOpen(true);
+                  setAiAnchor(e.currentTarget as HTMLElement);
+                }
+              }}
+              className={[
+                'text-xs opacity-0 transition-all group-hover:opacity-100',
+                aiOpen ? 'text-violet-400' : 'text-neutral-500 hover:text-violet-400',
+              ].join(' ')}
+            >
+              ✨
+            </button>
+          )}
+
+          <button
+            type="button"
+            onClick={handleCopy}
+            className="text-xs text-neutral-500 opacity-0 transition-all hover:text-neutral-200 group-hover:opacity-100"
+          >
+            {copied ? '✓ Copied' : 'Copy'}
+          </button>
+        </div>
       </div>
+
+      {/* AI actions popover */}
+      {aiOpen && aiAnchor && (
+        <BlockAiActions
+          block={block}
+          anchorEl={aiAnchor}
+          isCode={true}
+          codeLanguage={language}
+          onApply={(newText) => {
+            setCode(newText);
+            onSave({ code: newText, language });
+            setAiOpen(false);
+            setAiAnchor(null);
+          }}
+          onClose={() => {
+            setAiOpen(false);
+            setAiAnchor(null);
+          }}
+        />
+      )}
 
       {/* ── Code area: line numbers + editing/display pane ───────────────── */}
       <div className="flex">

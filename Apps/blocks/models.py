@@ -46,6 +46,10 @@ BLOCK_TYPE_REGISTRY: dict[str, dict] = {
     # content: { "code": "...", "language": "python", "output": null }
     'code':               {'category': 'code',        'has_children': False, 'canvas_ok': True,  'doc_ok': True},
 
+    # ── Table (doc only — TipTap JSON table) ─────────────────
+    # content: { "json": {...} }  ← full TipTap JSON with table nodes
+    'table':              {'category': 'table',       'has_children': False, 'canvas_ok': False, 'doc_ok': True},
+
     # ── Media (doc + canvas) ─────────────────────────────────
     # content: { "url": "...", "alt": "...", "width": null }
     'image':              {'category': 'media',       'has_children': False, 'canvas_ok': True,  'doc_ok': True},
@@ -149,7 +153,8 @@ class Block(EncryptableMixin, AIPermissionMixin, BaseModel):
     canvas_z = models.IntegerField(default=0)
 
     # ── Canvas styling ────────────────────────────────────────
-    bg_color = models.CharField(max_length=20, blank=True, default='')
+    bg_color   = models.CharField(max_length=30, blank=True, default='')
+    text_color = models.CharField(max_length=30, blank=True, default='')
 
     # ── Visibility ────────────────────────────────────────────
     doc_visible    = models.BooleanField(default=True)

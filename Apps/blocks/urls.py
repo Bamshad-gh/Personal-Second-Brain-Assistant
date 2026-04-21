@@ -10,14 +10,20 @@ from .views import (
     BlockMoveView,
     BlockTypesView,
     MakeColumnsView,
+    AddToColumnView,
+    CollapseColumnView,
+    FileUploadView,
 )
 
 urlpatterns = [
     # ── Collection endpoints ──────────────────────────────────────────────────
-    path('',              BlockListCreateView.as_view(), name='block-list-create'),
-    path('types/',        BlockTypesView.as_view(),      name='block-types'),
-    path('reorder/',      BlockReorderView.as_view(),    name='block-reorder'),
-    path('make-columns/', MakeColumnsView.as_view(),     name='block-make-columns'),
+    path('',                  BlockListCreateView.as_view(), name='block-list-create'),
+    path('types/',            BlockTypesView.as_view(),      name='block-types'),
+    path('reorder/',          BlockReorderView.as_view(),    name='block-reorder'),
+    path('make-columns/',     MakeColumnsView.as_view(),     name='block-make-columns'),
+    path('add-to-column/',    AddToColumnView.as_view(),     name='block-add-to-column'),
+    path('collapse-column/',  CollapseColumnView.as_view(),  name='block-collapse-column'),
+    path('upload/',           FileUploadView.as_view(),      name='block-upload'),
 
     # ── Single-block endpoints ────────────────────────────────────────────────
     path('<uuid:pk>/',            BlockDetailView.as_view(),    name='block-detail'),

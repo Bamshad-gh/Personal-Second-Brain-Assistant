@@ -32,6 +32,9 @@ urlpatterns = [
 
     # Properties endpoints (definitions + values)
     path('api/properties/', include('Apps.properties.urls')),
+
+    # Admin dashboard API (staff only — IsAdminUser permission on every view)
+    path('api/admin/', include('Apps.admin_dashboard.urls')),
 ]
 
 # Serve media files in development

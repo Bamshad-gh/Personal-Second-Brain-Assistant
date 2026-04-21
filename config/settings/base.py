@@ -33,9 +33,8 @@ INSTALLED_APPS = [
     'Apps.blocks',
     'Apps.properties',
     'Apps.relations',
-    'Apps.ai_agent'
-
-
+    'Apps.ai_agent',
+    'Apps.admin_dashboard',
 ]
 
 MIDDLEWARE = [

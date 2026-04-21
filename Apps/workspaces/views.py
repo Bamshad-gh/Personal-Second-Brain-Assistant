@@ -175,3 +175,69 @@ class SeedTemplatesView(APIView):
         results = seed_workspace_templates(workspace)
 
         return Response({"seeded": results}, status=status.HTTP_200_OK)
+
+
+class WorkspaceContextView(APIView):
+    """
+    GET /api/workspaces/{id}/context/
+
+    Returns concatenated plain text from the most-recently-updated pages
+    in this workspace. Used as global context for the AI assistant.
+
+    Skips locked pages (future encryption support).
+    Caps output at 8 000 chars so the AI call stays within token budget.
+
+    Response:
+      {
+        "context":    str,   — concatenated page text
+        "page_count": int,   — number of pages included
+        "char_count": int    — total characters in context
+      }
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, pk):
+        workspace = get_object_or_404(
+            Workspace,
+            pk=pk,
+            owner=request.user,
+            is_deleted=False,
+        )
+
+        pages = workspace.pages.filter(
+            is_deleted=False,
+            is_locked=False,
+        ).order_by('-updated_at')[:30]
+
+        parts: list[str] = []
+        total_chars = 0
+        MAX_CHARS   = 8_000
+
+        for page in pages:
+            if total_chars >= MAX_CHARS:
+                break
+
+            blocks = Block.objects.filter(
+                page=page,
+                is_deleted=False,
+                doc_visible=True,
+            ).order_by('order')[:20]
+
+            block_texts: list[str] = []
+            for b in blocks:
+                text = b.content.get('text') or b.content.get('code') or ''
+                if text:
+                    block_texts.append(f'[{b.block_type}] {str(text)[:200]}')
+
+            if block_texts:
+                page_text = f'## {page.title}\n' + '\n'.join(block_texts)
+                parts.append(page_text)
+                total_chars += len(page_text)
+
+        context = '\n\n'.join(parts)
+        return Response({
+            'context':    context,
+            'page_count': len(parts),
+            'char_count': len(context),
+        })

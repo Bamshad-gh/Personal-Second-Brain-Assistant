@@ -26,7 +26,7 @@ class BlockSerializer(serializers.ModelSerializer):
             'content', 'order',
             'canvas_x', 'canvas_y', 'canvas_w', 'canvas_h', 'canvas_z',
             'doc_visible', 'canvas_visible',
-            'bg_color', 'enc_tier', 'ai_consent',
+            'bg_color', 'text_color', 'enc_tier', 'ai_consent',
             'is_locked', 'is_deleted',
             'children_count', 'created_at', 'updated_at',
         ]
@@ -58,7 +58,7 @@ class BlockCreateSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'page', 'parent', 'block_type', 'content', 'order',
             'canvas_x', 'canvas_y', 'canvas_w', 'canvas_h', 'canvas_z',
-            'doc_visible', 'canvas_visible', 'bg_color',
+            'doc_visible', 'canvas_visible', 'bg_color', 'text_color',
         ]
         read_only_fields = ['id']
 
@@ -94,7 +94,7 @@ class BlockUpdateSerializer(serializers.ModelSerializer):
         fields = [
             'block_type', 'content', 'order', 'parent',
             'canvas_x', 'canvas_y', 'canvas_w', 'canvas_h', 'canvas_z',
-            'doc_visible', 'canvas_visible', 'bg_color',
+            'doc_visible', 'canvas_visible', 'bg_color', 'text_color',
             'is_locked', 'enc_tier', 'ai_consent',
         ]
 

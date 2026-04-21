@@ -54,7 +54,8 @@ import { createPortal }                               from 'react-dom';
 import { ArrowLeft, Lock, Sparkles,
          MoreHorizontal, Pencil, Files, Copy, Trash2,
          LayoutDashboard, FileText, Layers,
-         Maximize2, Minimize2 }                       from 'lucide-react';
+         Maximize2, Minimize2, ChevronsLeftRight,
+         Download }                                   from 'lucide-react';
 import toast                                          from 'react-hot-toast';
 import { useQuery, useMutation, useQueryClient }      from '@tanstack/react-query';
 import { pageApi }                                    from '@/lib/api';
@@ -75,6 +76,7 @@ import {
   useDeleteDocBlock,
 }                                                     from '@/hooks/useDocumentBlocks';
 import type { BacklinkPage, Block, BlockType, UpdateBlockPayload } from '@/types';
+import { blocksToMarkdown, downloadMarkdown }                      from '@/lib/exportPage';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Constants — icon picker + color picker
@@ -139,7 +141,7 @@ export default function PageEditorRoute() {
 
   // ── Load blocks (shared between doc + canvas) ───────────────────────────
   const { data: blocks = [], isLoading: blocksLoading } = useBlocks(pageId);
-  useCreateBlock(pageId); // kept to maintain hook call order; canvas create is via updateBlock
+  const createBlock = useCreateBlock(pageId); // canvas create + mindmap node creation
   const updateBlock = useUpdateBlock(pageId);
   const updatePage  = useUpdatePage(workspaceId);
   const deletePage  = useDeletePage(workspaceId);
@@ -326,6 +328,29 @@ export default function PageEditorRoute() {
   // ── Block template panel (canvas mode) ───────────────────────────────────
   const [showBlockPanel, setShowBlockPanel] = useState(false);
 
+  // ── Page width (document mode) ────────────────────────────────────────────
+  // Persisted per-page in localStorage. Cycles: default → wide → full → default.
+  type PageWidth = 'default' | 'wide' | 'full';
+  const [pageWidth, setPageWidth] = useState<PageWidth>('default');
+  // Hydrate from localStorage once the page id is known
+  useEffect(() => {
+    const stored = localStorage.getItem(`page-width-${pageId}`) as PageWidth | null;
+    if (stored === 'default' || stored === 'wide' || stored === 'full') {
+      setPageWidth(stored);
+    }
+  }, [pageId]);
+  useEffect(() => {
+    localStorage.setItem(`page-width-${pageId}`, pageWidth);
+  }, [pageId, pageWidth]);
+  const pageWidthClass =
+    pageWidth === 'full' ? 'w-full' :
+    pageWidth === 'wide' ? 'max-w-5xl' :
+    'max-w-3xl';
+  const pageWidthLabel =
+    pageWidth === 'default' ? 'Default width' :
+    pageWidth === 'wide'    ? 'Wide'          :
+    'Full width';
+
   // Reset local cover override when navigating to a different page
   useEffect(() => { setLocalCoverUrl(null); }, [pageId]);
 
@@ -380,6 +405,37 @@ export default function PageEditorRoute() {
     },
     [updateDocBlock],
   );
+
+  /** Toggle canvas_visible on a single doc block. Assigns default canvas position on first share. */
+  const handleToggleCanvasShare = useCallback((blockId: string) => {
+    const block = blocks.find((b) => b.id === blockId);
+    if (!block) return;
+
+    if (block.canvas_visible) {
+      updateDocBlock.mutate({ id: blockId, payload: { canvas_visible: false } });
+    } else {
+      const positioned = blocks.filter((b) => b.canvas_x !== null);
+      const idx        = positioned.length;
+      const defaultX   = (idx % 3) * 380 + 50;
+      const defaultY   = Math.floor(idx / 3) * 280 + 50;
+
+      updateDocBlock.mutate({
+        id:      blockId,
+        payload: {
+          canvas_visible: true,
+          canvas_x:       defaultX,
+          canvas_y:       defaultY,
+          canvas_w:       320,
+        },
+      });
+    }
+  }, [blocks, updateDocBlock]);
+
+  /** Export the current page as a Markdown file. */
+  const handleExport = useCallback(() => {
+    const md = blocksToMarkdown(blocks);
+    downloadMarkdown(md, title || 'untitled');
+  }, [blocks, title]);
 
   // ── Loading / error ─────────────────────────────────────────────────────
 
@@ -482,11 +538,12 @@ export default function PageEditorRoute() {
     afterBlockId: string | null,
     blockType: BlockType,
     nextBlock?: Block | null,
+    parentId?: string,
   ) {
     const afterBlock = afterBlockId
       ? docBlocks.find((b) => b.id === afterBlockId) ?? null
       : null;
-    createDocBlock.mutate({ afterBlock, nextBlock: nextBlock ?? null, blockType });
+    createDocBlock.mutate({ afterBlock, nextBlock: nextBlock ?? null, blockType, parentId });
   }
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -567,6 +624,11 @@ export default function PageEditorRoute() {
           onClick: openTypePicker,
         },
         {
+          label:   'Export as Markdown',
+          icon:    <Download size={13} />,
+          onClick: handleExport,
+        },
+        {
           label:   'Delete',
           icon:    <Trash2 size={13} />,
           variant: 'danger' as const,
@@ -612,7 +674,7 @@ export default function PageEditorRoute() {
 
           /* ── Compact canvas header (hidden when fullscreen) ─────────── */
           !canvasFullscreen ? (
-            <div className="flex shrink-0 items-center gap-1 border-b border-neutral-800 px-3 py-2">
+            <div className="flex shrink-0 items-center gap-1 border-b border-neutral-800 px-3 py-2 min-w-0">
 
               {/* ← Back to workspace */}
               <button
@@ -623,24 +685,24 @@ export default function PageEditorRoute() {
                 <ArrowLeft size={13} />
               </button>
 
-              {/* Page icon + title */}
-              <span className="select-none text-base leading-none">{page.icon || '📄'}</span>
-              <span className="max-w-45 truncate text-sm text-neutral-300">
+              {/* Page icon + title — truncates on mobile */}
+              <span className="select-none text-base leading-none shrink-0">{page.icon || '📄'}</span>
+              <span className="min-w-0 max-w-[100px] sm:max-w-[180px] truncate text-sm text-neutral-300">
                 {title || 'Untitled'}
               </span>
 
               {titleSaved && (
-                <span className="text-xs text-violet-400">Saved ✓</span>
+                <span className="hidden sm:inline text-xs text-violet-400">Saved ✓</span>
               )}
 
-              {/* Right-side controls */}
-              <div className="ml-auto flex items-center gap-1">
+              {/* Right-side controls — scrollable on mobile so nothing gets cut off */}
+              <div className="ml-auto flex items-center gap-1 overflow-x-auto shrink-0">
 
                 {/* AI toggle */}
                 <button
                   onClick={toggleAiPanel}
                   className={[
-                    'flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold',
+                    'flex shrink-0 items-center gap-1.5 rounded-lg px-2 sm:px-3 py-1.5 text-xs font-semibold',
                     'transition-all duration-200',
                     aiPanelOpen
                       ? 'text-white'
@@ -653,7 +715,7 @@ export default function PageEditorRoute() {
                   title="Toggle AI assistant"
                 >
                   <Sparkles size={13} />
-                  AI
+                  <span className="hidden sm:inline">AI</span>
                 </button>
 
                 {/* Sync all doc blocks to canvas */}
@@ -661,7 +723,7 @@ export default function PageEditorRoute() {
                   <button
                     onClick={handleSyncToCanvas}
                     className={[
-                      'flex items-center gap-1.5 rounded-lg px-2 py-1.5',
+                      'flex shrink-0 items-center gap-1.5 rounded-lg px-2 py-1.5',
                       'text-xs transition-colors',
                       allSynced
                         ? 'bg-violet-900/30 text-violet-400 hover:bg-violet-900/50'
@@ -672,7 +734,7 @@ export default function PageEditorRoute() {
                       : 'Sync all document blocks to canvas'}
                   >
                     <LayoutDashboard size={12} />
-                    <span>{allSynced ? 'Synced' : 'Sync to canvas'}</span>
+                    <span className="hidden sm:inline">{allSynced ? 'Synced' : 'Sync'}</span>
                   </button>
                 )}
 
@@ -680,7 +742,7 @@ export default function PageEditorRoute() {
                 <button
                   onClick={() => setShowBlockPanel(v => !v)}
                   className={[
-                    'flex items-center gap-1.5 rounded-lg px-2 py-1.5',
+                    'flex shrink-0 items-center gap-1.5 rounded-lg px-2 py-1.5',
                     'text-xs transition-colors',
                     showBlockPanel
                       ? 'bg-violet-900/30 text-violet-400'
@@ -689,7 +751,7 @@ export default function PageEditorRoute() {
                   title="Show document blocks panel"
                 >
                   <FileText size={12} />
-                  <span>Blocks</span>
+                  <span className="hidden sm:inline">Blocks</span>
                 </button>
 
                 {/* Switch to document mode */}
@@ -699,18 +761,19 @@ export default function PageEditorRoute() {
                       updatePage.mutate({ id: pageId, payload: { view_mode: 'document' } })
                     }
                     disabled={updatePage.isPending}
-                    className="flex items-center gap-1.5 rounded-lg bg-neutral-800 px-3 py-1.5 text-xs font-semibold text-neutral-400 transition-all duration-200 hover:bg-neutral-700 hover:text-neutral-200 disabled:opacity-50"
+                    className="flex shrink-0 items-center gap-1.5 rounded-lg bg-neutral-800 px-2 sm:px-3 py-1.5 text-xs font-semibold text-neutral-400 transition-all duration-200 hover:bg-neutral-700 hover:text-neutral-200 disabled:opacity-50"
                     title="Switch to document mode"
                   >
-                    <FileText size={13} /> Document
+                    <FileText size={13} />
+                    <span className="hidden sm:inline">Document</span>
                   </button>
                 )}
 
-                {/* Fullscreen toggle */}
+                {/* Fullscreen toggle — hidden on mobile (not useful on touch) */}
                 <button
                   onClick={() => setCanvasFullscreen(true)}
                   title="Fullscreen canvas"
-                  className="flex h-7 w-7 items-center justify-center rounded-lg text-neutral-600 transition-colors hover:bg-neutral-800 hover:text-neutral-300"
+                  className="hidden sm:flex h-7 w-7 items-center justify-center rounded-lg text-neutral-600 transition-colors hover:bg-neutral-800 hover:text-neutral-300"
                 >
                   <Maximize2 size={13} />
                 </button>
@@ -718,7 +781,7 @@ export default function PageEditorRoute() {
                 {/* Page options "..." */}
                 <DropdownMenu items={pageMenuItems}>
                   <button
-                    className="flex h-7 w-7 items-center justify-center rounded-lg text-neutral-600 transition-colors hover:bg-neutral-800 hover:text-neutral-300"
+                    className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-neutral-600 transition-colors hover:bg-neutral-800 hover:text-neutral-300"
                     title="Page options"
                   >
                     <MoreHorizontal size={15} />
@@ -728,7 +791,7 @@ export default function PageEditorRoute() {
               </div>
 
               {page.is_locked && (
-                <span className="flex items-center gap-1 rounded-full bg-neutral-800 px-2 py-0.5 text-xs text-neutral-500">
+                <span className="hidden sm:flex items-center gap-1 rounded-full bg-neutral-800 px-2 py-0.5 text-xs text-neutral-500">
                   <Lock size={10} /> Locked
                 </span>
               )}
@@ -738,10 +801,10 @@ export default function PageEditorRoute() {
         ) : (
 
           /* ── Full document header ────────────────────────────────────── */
-          <div className={`mx-auto w-full max-w-3xl px-6 ${coverUrl ? 'pt-6' : 'pt-10'} animate-fade-in`}>
+          <div className={`mx-auto w-full max-w-3xl px-4 sm:px-6 ${coverUrl ? 'pt-6' : 'pt-10'} animate-fade-in`}>
 
             {/* Top bar */}
-            <div className="mb-8 flex items-center gap-3">
+            <div className="mb-8 flex items-center gap-2 min-w-0">
 
               {/* ← Back to workspace */}
               <button
@@ -753,17 +816,17 @@ export default function PageEditorRoute() {
               </button>
 
               {titleSaved && (
-                <span className="text-xs text-violet-400">Saved ✓</span>
+                <span className="hidden sm:inline text-xs text-violet-400 shrink-0">Saved ✓</span>
               )}
 
-              {/* Right-side controls */}
-              <div className="ml-auto flex items-center gap-1">
+              {/* Right-side controls — shrink-0 prevents flex-wrap crushing */}
+              <div className="ml-auto flex shrink-0 items-center gap-1">
 
                 {/* AI toggle button */}
                 <button
                   onClick={toggleAiPanel}
                   className={[
-                    'flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold',
+                    'flex items-center gap-1.5 rounded-lg px-2 sm:px-3 py-1.5 text-xs font-semibold',
                     'transition-all duration-200',
                     aiPanelOpen
                       ? 'text-white'
@@ -776,7 +839,7 @@ export default function PageEditorRoute() {
                   title="Toggle AI assistant"
                 >
                   <Sparkles size={13} />
-                  AI
+                  <span className="hidden sm:inline">AI</span>
                 </button>
 
                 {/* Sync all doc blocks to canvas */}
@@ -795,8 +858,8 @@ export default function PageEditorRoute() {
                       : 'Sync all document blocks to canvas'}
                   >
                     <LayoutDashboard size={12} />
-                    <span>
-                      {allSynced ? 'Synced' : 'Sync to canvas'}
+                    <span className="hidden sm:inline">
+                      {allSynced ? 'Synced' : 'Sync'}
                     </span>
                   </button>
                 )}
@@ -810,15 +873,15 @@ export default function PageEditorRoute() {
                     }}
                     disabled={updatePage.isPending}
                     className={[
-                      'flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold',
+                      'flex items-center gap-1.5 rounded-lg px-2 sm:px-3 py-1.5 text-xs font-semibold',
                       'bg-neutral-800 text-neutral-400 hover:bg-neutral-700 hover:text-neutral-200',
                       'transition-all duration-200 disabled:opacity-50',
                     ].join(' ')}
                     title={isCanvas ? 'Switch to document mode' : 'Switch to canvas mode'}
                   >
                     {isCanvas
-                      ? <><FileText size={13} /> Document</>
-                      : <><LayoutDashboard size={13} /> Canvas</>
+                      ? <><FileText size={13} /><span className="hidden sm:inline"> Document</span></>
+                      : <><LayoutDashboard size={13} /><span className="hidden sm:inline"> Canvas</span></>
                     }
                   </button>
                 )}
@@ -836,7 +899,7 @@ export default function PageEditorRoute() {
               </div>
 
               {page.is_locked && (
-                <span className="flex items-center gap-1 rounded-full bg-neutral-800 px-2 py-0.5 text-xs text-neutral-500">
+                <span className="hidden sm:flex items-center gap-1 rounded-full bg-neutral-800 px-2 py-0.5 text-xs text-neutral-500">
                   <Lock size={10} /> Locked
                 </span>
               )}
@@ -956,7 +1019,22 @@ export default function PageEditorRoute() {
         ) : (
 
           // ── Document mode: constrained, scrollable DocumentEditor ───────
-          <div className="mx-auto w-full max-w-3xl px-6 pb-10">
+          <div className={`mx-auto w-full ${pageWidthClass} px-6 pb-10 transition-[max-width] duration-300`}>
+
+            {/* ── Width toggle ──────────────────────────────────────────── */}
+            <div className="mb-1 flex justify-end">
+              <button
+                onClick={() => setPageWidth(w => w === 'default' ? 'wide' : w === 'wide' ? 'full' : 'default')}
+                title={`${pageWidthLabel} — click to change`}
+                className="flex items-center gap-1.5 rounded-md px-2 py-1 text-xs
+                           text-neutral-600 transition-colors
+                           hover:bg-neutral-800 hover:text-neutral-400 select-none"
+              >
+                <ChevronsLeftRight size={13} />
+                <span>{pageWidthLabel}</span>
+              </button>
+            </div>
+
             {/* Accent line — rendered when color_style is 'accent' or 'both' */}
             {showAccent && (
               <div
@@ -976,6 +1054,7 @@ export default function PageEditorRoute() {
               onReorderBlock={handleReorderBlock}
               pendingFocusBlockId={pendingFocusBlockId}
               onFocusHandled={() => setPendingFocusBlockId(null)}
+              onToggleCanvasShare={handleToggleCanvasShare}
             />
 
             {/* Bottom tab bar — Linked Pages + Canvas Blocks tabs */}
@@ -991,14 +1070,50 @@ export default function PageEditorRoute() {
 
       </div>{/* end main column */}
 
-      {/* ── AI Panel (slides in from right) ────────────────────────────── */}
+      {/* ── AI Panel ────────────────────────────────────────────────────
+           Mobile: fixed bottom sheet (60vh), dark backdrop behind it.
+           Desktop: side panel in the flex row (md:relative).           */}
       {aiPanelOpen && (
+        <>
+          {/* Mobile backdrop — tap to close */}
+          <div
+            className="fixed inset-0 z-40 bg-black/50 md:hidden"
+            onClick={() => toggleAiPanel()}
+          />
+          {/* Panel wrapper */}
+          <div className="fixed bottom-0 left-0 right-0 z-50 h-[62vh]
+                          md:relative md:bottom-auto md:left-auto md:right-auto
+                          md:z-auto md:h-auto md:flex md:shrink-0">
         <AiPanel
           pageId={pageId}
+          workspaceId={workspaceId}
           pageContent={pageContent}
           onClose={() => toggleAiPanel()}
           selectedText={selectedText}
+          onMindmapAction={(nodes) => {
+            // Switch to canvas and create a sticky block for each mindmap node
+            if (!isCanvas) {
+              updatePage.mutate({
+                id:      pageId,
+                payload: { view_mode: 'canvas' },
+              });
+            }
+            nodes.forEach((node, i) => {
+              createBlock.mutate({
+                block_type:     'text',
+                content:        { text: node.label },
+                canvas_x:       80 + (i % 4) * 220,
+                canvas_y:       80 + Math.floor(i / 4) * 140,
+                canvas_w:       180,
+                canvas_h:       60,
+                canvas_visible: true,
+                doc_visible:    false,
+              });
+            });
+          }}
         />
+          </div>
+        </>
       )}
     </div>
 
