@@ -98,7 +98,7 @@ Provider landscape changes fast. Swapping from OpenAI to Groq or a self-hosted m
 <img width="1047" height="583" alt="screenshot3" src="https://github.com/user-attachments/assets/b5eb9f3c-dac5-4ba7-a818-47665817a2dc" />
 <img width="1207" height="622" alt="P-SCREENSHOT2" src="https://github.com/user-attachments/assets/48cc14ec-b4b3-44fc-9e6a-a9f5c8553975" />
 <img width="247" height="893" alt="P-screenshot1" src="https://github.com/user-attachments/assets/b921d563-6c9a-4839-90a4-74db45f2b98b" />
->>>>>>> 8ac9edd107b3e32bf20414c2ed7935a7bec4cf8f
+
 
 **Why ownership-via-404 instead of 403?**
 Information leakage prevention. A 403 confirms the resource exists.
@@ -107,9 +107,6 @@ Information leakage prevention. A 403 confirms the resource exists.
 Provider landscape changes fast. Swapping from OpenAI to Groq or a self-hosted model should be a config change, not a refactor.
 
 ---
-<img width="1047" height="583" alt="screenshot3" src="https://github.com/user-attachments/assets/b5eb9f3c-dac5-4ba7-a818-47665817a2dc" />
-<img width="1207" height="622" alt="P-SCREENSHOT2" src="https://github.com/user-attachments/assets/48cc14ec-b4b3-44fc-9e6a-a9f5c8553975" />
-<img width="247" height="893" alt="P-screenshot1" src="https://github.com/user-attachments/assets/b921d563-6c9a-4839-90a4-74db45f2b98b" />
 
 ## Roadmap
 
