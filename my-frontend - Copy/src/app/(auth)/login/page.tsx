@@ -21,7 +21,7 @@
 
 'use client';
 
-import { Suspense, useState } from 'react';
+import { useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useForm } from 'react-hook-form';
 import Link from 'next/link';
@@ -38,10 +38,10 @@ import type { ApiError, LoginPayload } from '@/types';
 type LoginFormValues = LoginPayload; // { email: string; password: string }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Inner component — useSearchParams() must live inside a Suspense boundary
+// Page component
 // ─────────────────────────────────────────────────────────────────────────────
 
-function LoginContent() {
+export default function LoginPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
 
@@ -185,17 +185,5 @@ function LoginContent() {
         </Link>
       </p>
     </div>
-  );
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Page export — wraps LoginContent in Suspense (required by useSearchParams)
-// ─────────────────────────────────────────────────────────────────────────────
-
-export default function LoginPage() {
-  return (
-    <Suspense fallback={null}>
-      <LoginContent />
-    </Suspense>
   );
 }

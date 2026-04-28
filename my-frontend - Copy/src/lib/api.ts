@@ -1,0 +1,1147 @@
+/**
+ * lib/api.ts
+ *
+ * What:    The entire HTTP layer for this app.
+ *          - One configured Axios instance (baseURL, headers, credentials)
+ *          - Two interceptors (attach token, auto-refresh on 401)
+ *          - Named API functions grouped by resource
+ *
+ * Why here: Every API call lives in this file. Components and hooks never
+ *           call axios directly — they import from here. This means one
+ *           place to change auth logic, base URL, or error handling.
+ *
+ * Django analogy: This is like Django's views + urls combined for the client.
+ *           Just as Django views know how to handle requests, these functions
+ *           know how to make requests to the backend.
+ *
+ * How to expand: Add new API groups at the bottom following the same pattern.
+ *           Each group should mirror one Django app's endpoints.
+ *
+ * Exports: axiosInstance, authApi, workspaceApi, pageApi (+ uploadCover/removeCover/getGallery), blockApi, aiApi, relationsApi, propertyApi, customPageTypeApi, pageTypeGroupApi, graphApi
+ */
+
+import axios, {
+  AxiosInstance,
+  AxiosError,
+  InternalAxiosRequestConfig,
+} from 'axios';
+import {
+  getAccessToken,
+  setAccessToken,
+  clearAccessToken,
+  clearSessionCookie,
+} from './auth';
+import type {
+  User,
+  Workspace,
+  Page,
+  Block,
+  BlockTypeInfo,
+  Connection,
+  BlockConnection,
+  BacklinkPage,
+  PagePreview,
+  CustomPageType,
+  PageTypeGroup,
+  PropertyDefinition,
+  PropertyValue,
+  GraphNode,
+  GraphEdge,
+  GalleryImage,
+  AuthTokens,
+  RefreshResponse,
+  PaginatedResponse,
+  LoginPayload,
+  RegisterPayload,
+  CreateWorkspacePayload,
+  UpdateWorkspacePayload,
+  CreatePagePayload,
+  UpdatePagePayload,
+  CreateBlockPayload,
+  UpdateBlockPayload,
+  ReorderBlocksPayload,
+  AiActionPayload,
+  AiActionDefinition,
+  AiQuota,
+  AiChatPayload,
+  AiChatMessage,
+  AiUsageSummary,
+  ApiError,
+} from '@/types';
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Axios instance
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * The base URL comes from an environment variable.
+ * In development: set NEXT_PUBLIC_API_URL=http://localhost:8000 in .env.local
+ * In production:  set NEXT_PUBLIC_API_URL=https://your-api.com in your host
+ *
+ * withCredentials: true tells the browser to include cookies on every request.
+ * This is what makes the httpOnly refresh token cookie get sent to Django.
+ */
+export const axiosInstance: AxiosInstance = axios.create({
+  baseURL: process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000',
+  headers: { 'Content-Type': 'application/json' },
+  withCredentials: true, // send httpOnly cookies automatically
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Token refresh queue
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * isRefreshing prevents multiple simultaneous token refresh calls.
+ * If 3 requests fail with 401 at the same time, only the first one triggers
+ * a refresh. The other 2 wait in the queue and replay after the refresh.
+ */
+let isRefreshing = false;
+
+/**
+ * Each item in the queue is a pair of functions:
+ *   resolve(newToken) — replay the request with the new token
+ *   reject(error)     — fail the request if refresh fails
+ */
+type QueueItem = {
+  resolve: (token: string) => void;
+  reject: (error: unknown) => void;
+};
+let failedQueue: QueueItem[] = [];
+
+/** Drains the queue: either replays all waiting requests or fails them all */
+function processQueue(error: unknown, token: string | null): void {
+  failedQueue.forEach(({ resolve, reject }) => {
+    if (error) {
+      reject(error);
+    } else if (token) {
+      resolve(token);
+    }
+  });
+  failedQueue = [];
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Request interceptor — attach the Bearer token
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Runs before every outgoing request.
+ * If we have an access token in memory, add it to the Authorization header.
+ * If not, the request goes without auth (will get 401 if the endpoint requires it).
+ */
+axiosInstance.interceptors.request.use(
+  (config: InternalAxiosRequestConfig) => {
+    const token = getAccessToken();
+    if (token) {
+      config.headers.Authorization = `Bearer ${token}`;
+    }
+    return config;
+  },
+  (error: unknown) => Promise.reject(error),
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Response interceptor — auto-refresh on 401
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Runs after every response.
+ * On success (2xx): pass through unchanged.
+ * On 401 error:
+ *   1. If not already refreshing, call /api/auth/token/refresh/
+ *   2. On success: store new token, replay original request
+ *   3. On failure: clear everything, redirect to /login
+ */
+axiosInstance.interceptors.response.use(
+  (response) => response,
+  async (error: AxiosError) => {
+    const originalRequest = error.config as InternalAxiosRequestConfig & {
+      _retry?: boolean;
+    };
+
+    // Only intercept 401 errors, and only retry once (_retry flag prevents loops)
+    if (error.response?.status !== 401 || originalRequest._retry) {
+      return Promise.reject(parseApiError(error));
+    }
+
+    // If a refresh is already in progress, queue this request
+    if (isRefreshing) {
+      return new Promise<string>((resolve, reject) => {
+        failedQueue.push({ resolve, reject });
+      }).then((newToken) => {
+        originalRequest.headers.Authorization = `Bearer ${newToken}`;
+        return axiosInstance(originalRequest);
+      });
+    }
+
+    // This request is the first to get a 401 — kick off a refresh
+    originalRequest._retry = true;
+    isRefreshing = true;
+
+    try {
+      // Use a plain axios call (not our instance) to avoid interceptor loops
+      const { data } = await axios.post<RefreshResponse>(
+        // Backend URL: /api/auth/refresh/  (NOT /api/auth/token/refresh/)
+        `${process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000'}/api/auth/refresh/`,
+        {},
+        { withCredentials: true }, // sends the httpOnly refresh cookie
+      );
+
+      const newToken = data.access;
+      setAccessToken(newToken);
+      processQueue(null, newToken);
+
+      // Replay the original failed request with the new token
+      originalRequest.headers.Authorization = `Bearer ${newToken}`;
+      return axiosInstance(originalRequest);
+    } catch (refreshError) {
+      // Refresh failed — session is truly expired
+      processQueue(refreshError, null);
+      clearAccessToken();
+      clearSessionCookie();
+      // Redirect to login (works in both client and server context)
+      if (typeof window !== 'undefined') {
+        window.location.href = '/login';
+      }
+      return Promise.reject(refreshError);
+    } finally {
+      isRefreshing = false;
+    }
+  },
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Error parser — converts Axios errors into our ApiError shape
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Converts a raw Axios error into the ApiError interface from types/index.ts.
+ * DRF can return errors as { detail: 'msg' } or { field: ['msg'] } or
+ * just a string. This normalises all of them.
+ */
+function parseApiError(error: AxiosError): ApiError {
+  const statusCode = error.response?.status ?? 0;
+  const data = error.response?.data as Record<string, unknown> | undefined;
+
+  if (!data) {
+    return { message: error.message ?? 'Network error', statusCode };
+  }
+
+  // DRF generic non-field errors — checks both 'detail' and 'error' keys
+  // Django REST Framework uses 'detail', but custom views often use 'error'
+  const genericMessage =
+    typeof data.detail === 'string' ? data.detail :
+    typeof data.error === 'string'  ? data.error  : null;
+
+  if (genericMessage) {
+    return { message: genericMessage, detail: genericMessage, statusCode };
+  }
+
+  // DRF field-level validation errors: { email: ['already exists'] }
+  const fields: Record<string, string[]> = {};
+  let firstMessage = 'An error occurred';
+
+  Object.entries(data).forEach(([key, value]) => {
+    if (Array.isArray(value)) {
+      fields[key] = value as string[];
+      if (firstMessage === 'An error occurred' && value.length > 0) {
+        firstMessage = `${key}: ${value[0]}`;
+      }
+    }
+  });
+
+  return { message: firstMessage, fields, statusCode };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// AUTH API
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * BackendAuthResponse — the ACTUAL shape Django returns for login/register.
+ * Backend returns a flat object: { user, access, refresh }
+ * We map this internally to { user, tokens } so the rest of the app has
+ * a consistent shape regardless of what the backend sends.
+ */
+interface BackendAuthResponse {
+  user: User;
+  access: string;    // JWT access token
+  refresh: string;   // JWT refresh token
+}
+
+/**
+ * authApi — mirrors Django's /api/auth/ endpoints
+ * login and register both call the backend and normalise the flat response
+ * into the { user, tokens: { access, refresh } } shape used throughout the app.
+ */
+export const authApi = {
+  /** POST /api/auth/login/ — returns normalised { user, tokens } */
+  login: async (payload: LoginPayload): Promise<{ tokens: AuthTokens; user: User }> => {
+    const { data } = await axiosInstance.post<BackendAuthResponse>(
+      '/api/auth/login/',
+      payload,
+    );
+    // Map flat backend response to nested internal shape
+    return {
+      user: data.user,
+      tokens: { access: data.access, refresh: data.refresh },
+    };
+  },
+
+  /** POST /api/auth/register/ — creates account, returns normalised { user, tokens } */
+  register: async (payload: RegisterPayload): Promise<{ tokens: AuthTokens; user: User }> => {
+    const { data } = await axiosInstance.post<BackendAuthResponse>(
+      '/api/auth/register/',
+      payload,
+    );
+    // Map flat backend response to nested internal shape
+    return {
+      user: data.user,
+      tokens: { access: data.access, refresh: data.refresh },
+    };
+  },
+
+  /** POST /api/auth/logout/ — backend clears the httpOnly cookie */
+  logout: async (): Promise<void> => {
+    await axiosInstance.post('/api/auth/logout/');
+  },
+
+  /** GET /api/auth/me/ — returns the currently authenticated user */
+  getMe: async (): Promise<User> => {
+    const { data } = await axiosInstance.get<User>('/api/auth/me/');
+    return data;
+  },
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// WORKSPACE API
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** workspaceApi — mirrors Django's /api/workspaces/ endpoints */
+export const workspaceApi = {
+  /** GET /api/workspaces/ — list all workspaces the current user has access to */
+  list: async (): Promise<Workspace[]> => {
+    const { data } = await axiosInstance.get<PaginatedResponse<Workspace> | Workspace[]>('/api/workspaces/');
+    // Handle both DRF paginated { results: [...] } and flat array responses
+    return Array.isArray(data) ? data : data.results ?? [];
+  },
+
+  /** POST /api/workspaces/ — create a new workspace */
+  create: async (payload: CreateWorkspacePayload): Promise<Workspace> => {
+    const { data } = await axiosInstance.post<Workspace>('/api/workspaces/', payload);
+    return data;
+  },
+
+  /** GET /api/workspaces/:id/ — fetch a single workspace by ID */
+  get: async (id: string): Promise<Workspace> => {
+    const { data } = await axiosInstance.get<Workspace>(`/api/workspaces/${id}/`);
+    return data;
+  },
+
+  /** PATCH /api/workspaces/:id/ — update workspace fields (partial update) */
+  update: async (id: string, payload: UpdateWorkspacePayload): Promise<Workspace> => {
+    const { data } = await axiosInstance.patch<Workspace>(`/api/workspaces/${id}/`, payload);
+    return data;
+  },
+
+  /** DELETE /api/workspaces/:id/ — soft delete (sets is_deleted = true) */
+  delete: async (id: string): Promise<void> => {
+    await axiosInstance.delete(`/api/workspaces/${id}/`);
+  },
+
+  /**
+   * POST /api/workspaces/:id/seed-templates/
+   * Idempotent — seeds the built-in CLIENT, PROJECT, INVOICE page types.
+   * Safe to call multiple times; existing types are never overwritten.
+   * Returns one entry per template with whether it was newly created.
+   */
+  seedTemplates: async (id: string): Promise<{ seeded: { name: string; created: boolean }[] }> => {
+    const { data } = await axiosInstance.post<{ seeded: { name: string; created: boolean }[] }>(
+      `/api/workspaces/${id}/seed-templates/`
+    );
+    return data;
+  },
+
+  /**
+   * GET /api/workspaces/:id/context/
+   * Returns concatenated plain text from all workspace pages (≤ 8 000 chars).
+   * Used as global AI assistant context.
+   */
+  getContext: async (id: string): Promise<{
+    context:    string;
+    page_count: number;
+    char_count: number;
+  }> => {
+    const { data } = await axiosInstance.get(`/api/workspaces/${id}/context/`);
+    return data;
+  },
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PAGE API
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** pageApi — mirrors Django's /api/pages/ endpoints */
+export const pageApi = {
+  /**
+   * GET /api/pages/?workspace=<id> — list all pages in a workspace (for sidebar).
+   *
+   * BUG FIX (was /api/workspaces/:id/pages/):
+   *   The workspace-nested URL returns PageTreeSerializer (nested tree, no 'parent' field).
+   *   The frontend's flat-to-tree algorithm in PageTree.tsx requires a flat list with 'parent'.
+   *   Switching to /api/pages/?workspace=<id> returns PageListSerializer (flat, with 'parent').
+   *
+   * The backend has pagination_class = None on PageListCreateView, so this always
+   * returns a flat array (never a paginated {count, results} envelope).
+   */
+  list: async (workspaceId: string): Promise<Page[]> => {
+    const { data } = await axiosInstance.get<Page[]>(
+      '/api/pages/',
+      { params: { workspace: workspaceId } },
+    );
+    return Array.isArray(data) ? data : (data as PaginatedResponse<Page>).results ?? [];
+  },
+
+  /**
+   * POST /api/pages/ — create a page.
+   *
+   * WHY /api/pages/ and NOT /api/workspaces/:id/pages/:
+   *   The workspace-nested route only supports GET (returns the sidebar tree).
+   *   POST goes to the flat /api/pages/ endpoint via PageListCreateView.
+   *   PageCreateSerializer requires 'workspace' UUID in the request body.
+   */
+  create: async (workspaceId: string, payload: CreatePagePayload): Promise<Page> => {
+    const { data } = await axiosInstance.post<Page>(
+      '/api/pages/',
+      { ...payload, workspace: workspaceId }, // backend requires workspace in body
+    );
+    return data;
+  },
+
+  /** GET /api/pages/:id/ — fetch a single page (includes its blocks) */
+  get: async (id: string): Promise<Page> => {
+    const { data } = await axiosInstance.get<Page>(`/api/pages/${id}/`);
+    return data;
+  },
+
+  /** PATCH /api/pages/:id/ — update page metadata (title, icon, etc.) */
+  update: async (id: string, payload: UpdatePagePayload): Promise<Page> => {
+    const { data } = await axiosInstance.patch<Page>(`/api/pages/${id}/`, payload);
+    return data;
+  },
+
+  /** DELETE /api/pages/:id/ — soft delete */
+  delete: async (id: string): Promise<void> => {
+    await axiosInstance.delete(`/api/pages/${id}/`);
+  },
+
+  /** POST /api/pages/:id/duplicate/ — creates a copy of the page with all blocks */
+  duplicate: async (pageId: string): Promise<Page> => {
+    const { data } = await axiosInstance.post<Page>(`/api/pages/${pageId}/duplicate/`);
+    return data;
+  },
+
+  /**
+   * GET /api/relations/pages/:id/backlinks/
+   * Returns all pages that contain a [[link]] pointing to this page.
+   * Used by the BacklinksPanel at the bottom of the editor page.
+   */
+  backlinks: async (pageId: string): Promise<BacklinkPage[]> => {
+    const { data } = await axiosInstance.get<BacklinkPage[]>(
+      `/api/relations/pages/${pageId}/backlinks/`,
+    );
+    return data;
+  },
+
+  /** GET /api/pages/:id/preview/ — lightweight data for the hover card */
+  preview: async (pageId: string): Promise<PagePreview> => {
+    const { data } = await axiosInstance.get<PagePreview>(`/api/pages/${pageId}/preview/`);
+    return data;
+  },
+
+  /**
+   * POST /api/pages/:id/cover/ — upload a cover image file (multipart).
+   * Clears header_pic_url on the backend; returns the new absolute URL.
+   */
+  uploadCover: async (pageId: string, file: File): Promise<{ header_pic: string }> => {
+    const form = new FormData();
+    form.append('image', file);
+    const { data } = await axiosInstance.post<{ header_pic: string }>(
+      `/api/pages/${pageId}/cover/`,
+      form,
+      { headers: { 'Content-Type': 'multipart/form-data' } },
+    );
+    return data;
+  },
+
+  /** DELETE /api/pages/:id/cover/ — removes both header_pic file and header_pic_url */
+  removeCover: async (pageId: string): Promise<void> => {
+    await axiosInstance.delete(`/api/pages/${pageId}/cover/`);
+  },
+
+  /** PATCH /api/pages/:id/move/ — move page to a new parent and/or reorder among siblings */
+  move: async (id: string, payload: { parent_id: string | null; order: number }): Promise<Page> => {
+    const { data } = await axiosInstance.patch<Page>(`/api/pages/${id}/move/`, payload);
+    return data;
+  },
+
+  /** GET /api/pages/gallery/ — list curated cover images from media/gallery/ */
+  getGallery: async (): Promise<GalleryImage[]> => {
+    const { data } = await axiosInstance.get<GalleryImage[]>('/api/pages/gallery/');
+    return data;
+  },
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// BLOCK API
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * blockApi — mirrors Django's /api/blocks/ endpoints.
+ *
+ * WHY /api/blocks/ and NOT /api/pages/:id/blocks/:
+ *   There is no nested page-blocks URL in the backend.
+ *   All block operations go through /api/blocks/ with a ?page= query param.
+ *
+ *   Endpoint map (from Apps/blocks/urls.py):
+ *     GET    /api/blocks/?page={id}  → list blocks for a page
+ *     POST   /api/blocks/            → create a block (page id in body)
+ *     PATCH  /api/blocks/{id}/       → update a block
+ *     DELETE /api/blocks/{id}/       → soft delete
+ *     POST   /api/blocks/reorder/    → batch reorder
+ */
+export const blockApi = {
+  /**
+   * GET /api/blocks/?page={pageId} — list all blocks for a page.
+   * Backend returns a paginated response; we unwrap 'results' here.
+   */
+  list: async (pageId: string): Promise<Block[]> => {
+    const { data } = await axiosInstance.get<PaginatedResponse<Block> | Block[]>(
+      '/api/blocks/',
+      { params: { page: pageId } },
+    );
+    // Handle both paginated ({results:[...]}) and flat ([...]) shapes
+    return Array.isArray(data) ? data : (data.results ?? []);
+  },
+
+  /**
+   * POST /api/blocks/ — create a new block.
+   * 'page' UUID must be in the request body (BlockCreateSerializer requires it).
+   */
+  create: async (pageId: string, payload: CreateBlockPayload): Promise<Block> => {
+    const { data } = await axiosInstance.post<Block>(
+      '/api/blocks/',
+      { ...payload, page: pageId }, // backend requires page in body
+    );
+    return data;
+  },
+
+  /** PATCH /api/blocks/:id/ — update a block's content or order */
+  update: async (id: string, payload: UpdateBlockPayload): Promise<Block> => {
+    const { data } = await axiosInstance.patch<Block>(`/api/blocks/${id}/`, payload);
+    return data;
+  },
+
+  /** DELETE /api/blocks/:id/ — soft delete */
+  delete: async (id: string): Promise<void> => {
+    await axiosInstance.delete(`/api/blocks/${id}/`);
+  },
+
+  /** POST /api/blocks/reorder/ — update order of multiple blocks at once */
+  reorder: async (payload: ReorderBlocksPayload): Promise<void> => {
+    await axiosInstance.post('/api/blocks/reorder/', payload);
+  },
+
+  /**
+   * GET /api/blocks/types/ — list all block types from BLOCK_TYPE_REGISTRY.
+   * No auth required. Used to build dynamic slash menus and block panels
+   * without hardcoding block type lists in the frontend.
+   */
+  getTypes: async (): Promise<BlockTypeInfo[]> => {
+    const { data } = await axiosInstance.get<BlockTypeInfo[]>('/api/blocks/types/');
+    return data;
+  },
+
+  /**
+   * POST /api/blocks/make-columns/ — convert two top-level blocks into a column layout.
+   * Creates a column_container with two column children; moves both source and target
+   * blocks into those columns. Returns the new column_container block.
+   */
+  makeColumns: async (sourceBlockId: string, targetBlockId: string): Promise<Block> => {
+    const { data } = await axiosInstance.post<Block>('/api/blocks/make-columns/', {
+      source_block_id: sourceBlockId,
+      target_block_id: targetBlockId,
+    });
+    return data;
+  },
+
+  /**
+   * POST /api/blocks/add-to-column/ — add a top-level block as a new column
+   * in an existing column_container, creating (1,2,3) instead of nesting ((1,2),3).
+   */
+  addToColumn: async (sourceBlockId: string, containerBlockId: string): Promise<Block> => {
+    const { data } = await axiosInstance.post<Block>('/api/blocks/add-to-column/', {
+      source_block_id:    sourceBlockId,
+      container_block_id: containerBlockId,
+    });
+    return data;
+  },
+
+  /**
+   * Atomically collapses an empty column from its container.
+   * The backend handles all cases (0 / 1 / 2+ remaining columns) in one
+   * transaction, preventing the race condition that occurs when the
+   * frontend does sequential update → delete mutations.
+   */
+  collapseColumn: async (columnId: string): Promise<void> => {
+    await axiosInstance.post('/api/blocks/collapse-column/', { column_id: columnId });
+  },
+
+  /**
+   * uploadFile — POST /api/blocks/upload/
+   *
+   * Uploads a file to the server using multipart/form-data.
+   * Returns the permanent URL, original filename, size in bytes, and MIME type.
+   * Max file size: 10 MB. Allowed: image/*, application/pdf, video/*.
+   */
+  uploadFile: async (file: File): Promise<{
+    url:      string;
+    filename: string;
+    size:     number;
+    mimetype: string;
+  }> => {
+    const formData = new FormData();
+    formData.append('file', file);
+    const { data } = await axiosInstance.post<{
+      url:      string;
+      filename: string;
+      size:     number;
+      mimetype: string;
+    }>('/api/blocks/upload/', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+    return data;
+  },
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// AI API
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * aiApi — mirrors Django's /api/ai/ endpoints
+ *
+ * Endpoint map:
+ *   POST /api/ai/action/  → run a predefined action on text or a page
+ *   POST /api/ai/chat/    → free-form conversation, optionally grounded in a page
+ *
+ * WHERE TO ADD NEW ACTIONS:
+ *   Backend only: Apps/ai_agent/services.py → ACTION_DEFINITIONS dict
+ *   Frontend panel loads actions dynamically via getActions() — no changes needed
+ *
+ * WHERE TO SWITCH AI PROVIDERS:
+ *   Backend: config/settings/base.py → AI_PROVIDER + AI_MODELS
+ *   Provider code: Apps/ai_agent/services.py → PROVIDERS dict
+ */
+export const aiApi = {
+  /**
+   * GET /api/ai/actions/
+   * Returns the list of available actions (label, description, category).
+   * Does not include system prompts — those stay server-side.
+   * staleTime: Infinity is recommended — the list never changes at runtime.
+   */
+  getActions: async (): Promise<AiActionDefinition[]> => {
+    const { data } = await axiosInstance.get<AiActionDefinition[]>('/api/ai/actions/');
+    return data;
+  },
+
+  /**
+   * POST /api/ai/action/
+   * Runs a predefined action ('summarize', 'expand', 'fix_grammar', etc.)
+   * on given text or on a page fetched by the backend.
+   */
+  action: async (payload: AiActionPayload): Promise<{ result: string }> => {
+    const { data } = await axiosInstance.post<{ result: string }>('/api/ai/action/', payload);
+    return data;
+  },
+
+  /**
+   * POST /api/ai/chat/
+   * Free-form conversation. Send the full message history each time.
+   * Optionally pass page_id so the backend uses the page as context.
+   */
+  chat: async (payload: AiChatPayload): Promise<{ reply: string }> => {
+    const { data } = await axiosInstance.post<{ reply: string }>('/api/ai/chat/', payload);
+    return data;
+  },
+
+  /**
+   * GET /api/ai/usage/
+   * Returns token usage summary for the current user.
+   * Used by the sidebar footer to show "X calls this month".
+   */
+  getUsage: async (): Promise<AiUsageSummary> => {
+    const { data } = await axiosInstance.get<AiUsageSummary>('/api/ai/usage/');
+    return data;
+  },
+
+  /**
+   * GET /api/ai/quota/
+   * Returns the user's tier, daily limits, and today's usage.
+   * staleTime: 60_000 recommended — refreshes every minute in the AI panel.
+   */
+  getQuota: async (): Promise<AiQuota> => {
+    const { data } = await axiosInstance.get<AiQuota>('/api/ai/quota/');
+    return data;
+  },
+
+  /**
+   * GET /api/ai/chat/history/?page={pageId}
+   * Returns the last 50 persistent chat messages for this user+page.
+   * Used to pre-populate the chat tab when the panel opens.
+   */
+  getChatHistory: async (pageId: string): Promise<AiChatMessage[]> => {
+    const { data } = await axiosInstance.get<AiChatMessage[]>(
+      `/api/ai/chat/history/?page=${pageId}`,
+    );
+    return data;
+  },
+
+  /**
+   * DELETE /api/ai/chat/history/?page={pageId}
+   * Clears all persistent chat messages for this user+page.
+   * The frontend should confirm with the user before calling this.
+   */
+  clearChatHistory: async (pageId: string): Promise<void> => {
+    await axiosInstance.delete(`/api/ai/chat/history/?page=${pageId}`);
+  },
+
+  /**
+   * POST /api/ai/agent-chat/
+   * Structured agent chat — AI returns JSON with type='message'|'action'.
+   * Caller is responsible for parsing the returned `type` and showing confirmation.
+   */
+  agentChat: async (payload: {
+    messages: AiChatMessage[];
+    page_id?: string;
+    context?: string;
+  }): Promise<{
+    type:    string;
+    message: string;
+    action?: string;
+    params?: Record<string, unknown>;
+    data?:   Record<string, unknown>;
+  }> => {
+    const { data } = await axiosInstance.post('/api/ai/agent-chat/', payload);
+    return data;
+  },
+
+  /**
+   * POST /api/ai/execute/create-page/
+   * Atomically creates a page + its initial blocks.
+   * workspace_id must be the UUID of the target workspace.
+   */
+  executeCreatePage: async (payload: {
+    workspace_id: string;
+    title:        string;
+    blocks?:      { block_type: string; content: Record<string, unknown> }[];
+  }): Promise<Page> => {
+    const { data } = await axiosInstance.post<Page>('/api/ai/execute/create-page/', payload);
+    return data;
+  },
+
+  /**
+   * Add blocks to an existing page — parallel individual block POSTs.
+   * Uses blockApi.create() internally so all block logic stays consistent.
+   */
+  executeAddBlocks: async (
+    pageId:  string,
+    blocks:  { block_type: string; content: Record<string, unknown> }[],
+  ): Promise<Block[]> => {
+    const results = await Promise.all(
+      blocks.map((b, i) =>
+        axiosInstance.post<Block>('/api/blocks/', {
+          page:       pageId,
+          block_type: b.block_type,
+          content:    b.content,
+          order:      i + 1,
+        }).then(r => r.data),
+      ),
+    );
+    return results;
+  },
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// RELATIONS API — page links (Phase 2 Feature 1)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * relationsApi — mirrors Django's /api/relations/ endpoints.
+ *
+ * Endpoint map:
+ *   POST /api/relations/  → create a page link connection (upserts — safe to call twice)
+ *
+ * Backlinks (GET) live on pageApi.backlinks() because they are logically
+ * part of reading a page, and the URL is nested under /api/relations/pages/.
+ *
+ * WHERE THIS IS CALLED:
+ *   src/components/editor/Editor.tsx → handlePageLinkSelect()
+ */
+// ─────────────────────────────────────────────────────────────────────────────
+// PROPERTIES API — typed metadata fields on pages (Phase 2 Feature 2)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * propertyApi — mirrors Django's /api/properties/ endpoints.
+ *
+ * Endpoint map:
+ *   GET    /api/properties/definitions/?workspace=<id>  → list definitions
+ *   POST   /api/properties/definitions/                 → create definition
+ *   PATCH  /api/properties/definitions/<id>/            → update definition
+ *   DELETE /api/properties/definitions/<id>/            → soft delete
+ *   GET    /api/properties/values/?page=<id>            → list values for a page
+ *   POST   /api/properties/values/                      → create value
+ *   PATCH  /api/properties/values/<id>/                 → update value
+ *
+ * Upsert pattern (no dedicated upsert endpoint):
+ *   The backend has unique_together=(page, definition) on PropertyValue.
+ *   POSTing a duplicate would return 400. The useUpsertValue hook in
+ *   useProperties.ts checks the cached value list and calls createValue or
+ *   updateValue accordingly — avoiding the unique constraint entirely.
+ */
+export const propertyApi = {
+  // ── Definitions ──────────────────────────────────────────────────────────
+
+  listDefinitions: async (workspaceId: string): Promise<PropertyDefinition[]> => {
+    const { data } = await axiosInstance.get<PropertyDefinition[]>(
+      '/api/properties/definitions/',
+      { params: { workspace: workspaceId } },
+    );
+    return data;
+  },
+
+  createDefinition: async (payload: Partial<PropertyDefinition>): Promise<PropertyDefinition> => {
+    const { data } = await axiosInstance.post<PropertyDefinition>(
+      '/api/properties/definitions/',
+      payload,
+    );
+    return data;
+  },
+
+  updateDefinition: async (id: string, payload: Partial<PropertyDefinition>): Promise<PropertyDefinition> => {
+    const { data } = await axiosInstance.patch<PropertyDefinition>(
+      `/api/properties/definitions/${id}/`,
+      payload,
+    );
+    return data;
+  },
+
+  deleteDefinition: async (id: string): Promise<void> => {
+    await axiosInstance.delete(`/api/properties/definitions/${id}/`);
+  },
+
+  // ── Values ────────────────────────────────────────────────────────────────
+
+  listValues: async (pageId: string): Promise<PropertyValue[]> => {
+    const { data } = await axiosInstance.get<PropertyValue[]>(
+      '/api/properties/values/',
+      { params: { page: pageId } },
+    );
+    return data;
+  },
+
+  createValue: async (payload: Partial<PropertyValue>): Promise<PropertyValue> => {
+    const { data } = await axiosInstance.post<PropertyValue>(
+      '/api/properties/values/',
+      payload,
+    );
+    return data;
+  },
+
+  updateValue: async (id: string, payload: Partial<PropertyValue>): Promise<PropertyValue> => {
+    const { data } = await axiosInstance.patch<PropertyValue>(
+      `/api/properties/values/${id}/`,
+      payload,
+    );
+    return data;
+  },
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CUSTOM PAGE TYPES API — user-defined page categories (Feature 5)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * customPageTypeApi — mirrors Django's /api/properties/custom-types/ endpoints.
+ *
+ * Endpoint map:
+ *   GET    /api/properties/custom-types/?workspace=<id>  → list types
+ *   POST   /api/properties/custom-types/                 → create type
+ *   PATCH  /api/properties/custom-types/<id>/            → update type
+ *   DELETE /api/properties/custom-types/<id>/            → soft delete
+ */
+export const customPageTypeApi = {
+  list: async (workspaceId: string): Promise<CustomPageType[]> => {
+    const { data } = await axiosInstance.get<CustomPageType[]>(
+      '/api/properties/custom-types/',
+      { params: { workspace: workspaceId } },
+    );
+    return data;
+  },
+
+  create: async (payload: Omit<CustomPageType, 'id'>): Promise<CustomPageType> => {
+    const { data } = await axiosInstance.post<CustomPageType>(
+      '/api/properties/custom-types/',
+      payload,
+    );
+    return data;
+  },
+
+  update: async (id: string, payload: Partial<CustomPageType>): Promise<CustomPageType> => {
+    const { data } = await axiosInstance.patch<CustomPageType>(
+      `/api/properties/custom-types/${id}/`,
+      payload,
+    );
+    return data;
+  },
+
+  delete: async (id: string): Promise<void> => {
+    await axiosInstance.delete(`/api/properties/custom-types/${id}/`);
+  },
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PAGE TYPE GROUPS API — named, coloured buckets for CustomPageTypes (Phase 3)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * pageTypeGroupApi — mirrors Django's /api/properties/groups/ endpoints.
+ *
+ * Endpoint map:
+ *   GET    /api/properties/groups/?workspace=<id>  → list groups
+ *   POST   /api/properties/groups/                 → create group
+ *   PATCH  /api/properties/groups/<id>/            → update name/color/order
+ *   DELETE /api/properties/groups/<id>/            → soft delete (unlinks types first)
+ */
+export const pageTypeGroupApi = {
+  list: async (workspaceId: string): Promise<PageTypeGroup[]> => {
+    const { data } = await axiosInstance.get<PageTypeGroup[]>(
+      '/api/properties/groups/',
+      { params: { workspace: workspaceId } },
+    );
+    return data;
+  },
+
+  create: async (payload: { workspace: string; name: string; color?: string; order?: number }): Promise<PageTypeGroup> => {
+    const { data } = await axiosInstance.post<PageTypeGroup>(
+      '/api/properties/groups/',
+      payload,
+    );
+    return data;
+  },
+
+  update: async (id: string, payload: Partial<Pick<PageTypeGroup, 'name' | 'color' | 'order'>>): Promise<PageTypeGroup> => {
+    const { data } = await axiosInstance.patch<PageTypeGroup>(
+      `/api/properties/groups/${id}/`,
+      payload,
+    );
+    return data;
+  },
+
+  delete: async (id: string): Promise<void> => {
+    await axiosInstance.delete(`/api/properties/groups/${id}/`);
+  },
+};
+
+export const relationsApi = {
+  /**
+   * POST /api/relations/
+   * Records a [[page link]] connection between source and target pages.
+   * Called fire-and-forget when the user inserts a page link in the editor.
+   * Upserts on the backend — calling it twice for the same pair is safe.
+   */
+  createLink: async (sourcePageId: string, targetPageId: string): Promise<Connection> => {
+    const { data } = await axiosInstance.post<Connection>('/api/relations/', {
+      conn_type:   'page_link',
+      source_page: sourcePageId,
+      target_page: targetPageId,
+    });
+    return data;
+  },
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// BLOCK CONNECTION API — canvas arrow connections between blocks
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * blockConnectionApi — CRUD for canvas arrow connections (BLOCK_LINK).
+ *
+ * Endpoint map:
+ *   GET    /api/relations/block-connections/?page={id}  → list for a page
+ *   POST   /api/relations/block-connections/            → create
+ *   PATCH  /api/relations/block-connections/{id}/       → update label/direction/type
+ *   DELETE /api/relations/block-connections/{id}/       → soft-delete
+ *
+ * WHERE THIS IS CALLED:
+ *   src/hooks/useBlockConnections.ts → useBlockConnections / mutations
+ */
+export const blockConnectionApi = {
+  list: async (pageId: string): Promise<BlockConnection[]> => {
+    const { data } = await axiosInstance.get<BlockConnection[]>(
+      '/api/relations/block-connections/',
+      { params: { page: pageId } },
+    );
+    return data;
+  },
+
+  create: async (payload: {
+    source_block: string;
+    target_block: string;
+    arrow_type?:  'link' | 'flow';
+    direction?:   'directed' | 'undirected';
+    label?:       string;
+  }): Promise<BlockConnection> => {
+    const { data } = await axiosInstance.post<BlockConnection>(
+      '/api/relations/block-connections/',
+      payload,
+    );
+    return data;
+  },
+
+  update: async (
+    id: string,
+    payload: Partial<Pick<BlockConnection, 'label' | 'direction' | 'arrow_type'>>,
+  ): Promise<BlockConnection> => {
+    const { data } = await axiosInstance.patch<BlockConnection>(
+      `/api/relations/block-connections/${id}/`,
+      payload,
+    );
+    return data;
+  },
+
+  remove: async (id: string): Promise<void> => {
+    await axiosInstance.delete(`/api/relations/block-connections/${id}/`);
+  },
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GRAPH API — workspace knowledge map (TASK 5)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * graphApi — fetches the full page graph for a workspace in one request.
+ *
+ * Endpoint map:
+ *   GET /api/relations/workspace/{id}/graph/
+ *     → { nodes: GraphNode[], edges: GraphEdge[] }
+ *
+ * WHERE THIS IS CALLED:
+ *   src/hooks/useWorkspaceGraph.ts → useWorkspaceGraph()
+ *   src/app/(app)/[workspaceId]/graph/page.tsx → d3-force SVG graph
+ */
+export const graphApi = {
+  /**
+   * GET /api/relations/workspace/{workspaceId}/graph/
+   * Returns all non-deleted pages (nodes) and PAGE_LINK connections (edges)
+   * for the given workspace. Both endpoints are ownership-checked on the backend.
+   */
+  getWorkspaceGraph: async (workspaceId: string): Promise<{ nodes: GraphNode[]; edges: GraphEdge[] }> => {
+    const { data } = await axiosInstance.get<{ nodes: GraphNode[]; edges: GraphEdge[] }>(
+      `/api/relations/workspace/${workspaceId}/graph/`,
+    );
+    return data;
+  },
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ADMIN API — staff-only dashboard statistics
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * adminApi — read-only statistics for the /admin dashboard.
+ *
+ * All endpoints require is_staff=True on the backend (IsAdminUser permission).
+ * Non-staff requests receive 403 Forbidden — the frontend also redirects away,
+ * but the backend is the authoritative gate.
+ *
+ * WHERE THIS IS CALLED:
+ *   src/app/(admin)/admin/page.tsx → AdminDashboard component
+ */
+
+export interface AdminOverview {
+  users:   { total: number; new_30d: number; active_7d: number };
+  content: { pages: number; blocks: number; workspaces: number };
+  ai:      { calls_today: number; tokens_today: number };
+  tiers:   Record<string, number>;
+}
+
+export interface AdminUserRow {
+  id:              string;
+  email:           string;
+  username:        string;
+  date_joined:     string;
+  last_login:      string | null;
+  is_staff:        boolean;
+  is_active:       boolean;
+  workspace_count: number;
+  page_count:      number;
+  ai_tier:         string;
+  ai_calls_today:  number;
+}
+
+export interface AdminUserPage {
+  total:   number;
+  page:    number;
+  pages:   number;
+  results: AdminUserRow[];
+}
+
+export interface AdminAiActionRow {
+  action_name:   string;
+  count:         number;
+  input_tokens:  number;
+  output_tokens: number;
+}
+
+export interface AdminDailyRow {
+  date:   string;
+  calls:  number;
+  tokens: number;
+}
+
+export interface AdminTopUserRow {
+  user__email: string;
+  calls:       number;
+  tokens:      number;
+}
+
+export interface AdminAiStats {
+  by_action: AdminAiActionRow[];
+  daily:     AdminDailyRow[];
+  top_users: AdminTopUserRow[];
+}
+
+export interface AdminSecurity {
+  new_staff_accounts: { email: string; date_joined: string }[];
+  unlimited_ai_users: { user__email: string; updated_at: string }[];
+  never_logged_in:    number;
+}
+
+export const adminApi = {
+  getOverview: (): Promise<AdminOverview> =>
+    axiosInstance.get('/api/admin/overview/').then((r) => r.data),
+
+  getUsers: (page = 1, search = ''): Promise<AdminUserPage> =>
+    axiosInstance
+      .get(`/api/admin/users/?page=${page}&search=${encodeURIComponent(search)}`)
+      .then((r) => r.data),
+
+  getAiStats: (): Promise<AdminAiStats> =>
+    axiosInstance.get('/api/admin/ai-stats/').then((r) => r.data),
+
+  getSecurity: (): Promise<AdminSecurity> =>
+    axiosInstance.get('/api/admin/security/').then((r) => r.data),
+};
