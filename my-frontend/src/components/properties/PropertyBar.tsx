@@ -193,7 +193,6 @@ export function PropertyBar({ workspaceId, pageId, readOnly = false, customPageT
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
   const [mounted, setMounted] = useState(false);
-  // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => { setMounted(true); }, []);
 
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -249,7 +248,7 @@ export function PropertyBar({ workspaceId, pageId, readOnly = false, customPageT
     }
     document.addEventListener('mousedown', onMouseDown);
     return () => document.removeEventListener('mousedown', onMouseDown);
-  }, [addOpen]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [addOpen]);
 
   // Escape key — closes "Add property" popover
   useEffect(() => {
@@ -259,7 +258,7 @@ export function PropertyBar({ workspaceId, pageId, readOnly = false, customPageT
     }
     document.addEventListener('keydown', onKeyDown);
     return () => document.removeEventListener('keydown', onKeyDown);
-  }, [addOpen]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [addOpen]);
 
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   // RENAME STATE (inline on pill)

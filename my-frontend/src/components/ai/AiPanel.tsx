@@ -308,7 +308,6 @@ export function AiPanel({
           page_id:  pageId,
           context:  pageContent.slice(0, 2000),
         });
-        console.log('[Agent response]', response);
         setMessages([...nextMessages, { role: 'assistant', content: response.message }]);
         if (response.type === 'action') {
           // auto-execute read_page since it's non-destructive

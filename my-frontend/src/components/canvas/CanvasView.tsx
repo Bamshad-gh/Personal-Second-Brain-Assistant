@@ -212,7 +212,6 @@ export function CanvasView({
   hasCover,
   coverExpanded,
   onToggleCover,
-  fullscreen = false,
   showBlockPanel = false,
   sharedBlocks = [],
 }: CanvasViewProps) {
@@ -309,7 +308,6 @@ export function CanvasView({
   const canvasBlocks = blocks.filter(b => b.id !== contentBlock?.id);
 
   // ── Initialize positions for blocks with no stored coordinates ───────────
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
     blocks.forEach((block, index) => {
       if (block.canvas_x === null && block.id !== contentBlock?.id) {
@@ -317,7 +315,8 @@ export function CanvasView({
         updateBlock.mutate({ id: block.id, payload: { canvas_x: pos.x, canvas_y: pos.y } });
       }
     });
-  }, []); // run once on mount only
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // intentionally runs once on mount only
 
   // ── ResizeObserver — track actual rendered block heights ─────────────────
   // CanvasBlock uses position:absolute so a wrapper div in the Fragment would
@@ -346,7 +345,6 @@ export function CanvasView({
     });
 
     return () => observer.disconnect();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [canvasBlocks]);
 
   // ── Container size (for minimap viewport rect) ───────────────────────────
@@ -413,7 +411,6 @@ export function CanvasView({
 
     el.addEventListener('wheel', onWheel, { passive: false });
     return () => el.removeEventListener('wheel', onWheel);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // ── Pan + hover + ghost-line pointer handlers ─────────────────────────────

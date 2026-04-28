@@ -561,7 +561,11 @@ def run_action(action_type: str, content: str, extra: dict | None = None, user=N
             f"Unknown action '{action_type}'. Valid: {list(ACTION_DEFINITIONS.keys())}"
         )
 
-    system = defn['system'].format(**(extra or {})) if extra else defn['system']
+    # Only allow known keys into the format() call to prevent prompt injection
+    # via arbitrary format-string placeholders supplied by the caller.
+    _SAFE_EXTRA_KEYS = {'language', 'tone', 'length', 'target_language', 'style'}
+    safe_extra = {k: str(v)[:200] for k, v in (extra or {}).items() if k in _SAFE_EXTRA_KEYS}
+    system = defn['system'].format(**safe_extra) if safe_extra else defn['system']
 
     # Prepend language-aware constraints for code actions when a language is provided
     if defn.get('category') == 'code' and extra and extra.get('language'):
@@ -670,7 +674,7 @@ AGENT_ACTIONS: dict[str, str] = {
     'web_search':     'Search the web for current information (auto-executed, no approval needed)',
 }
 
-AGENT_SYSTEM_PROMPT = """You are an AI assistant inside SecondBrain workspace app.
+AGENT_SYSTEM_PROMPT = """You are an AI assistant inside SpatialScribe workspace app.
 You MUST respond with valid JSON only. Never respond with plain text.
 
 RESPONSE FORMAT — choose one:

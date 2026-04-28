@@ -1,4 +1,4 @@
-# SecondBrain AI Assistant — Frontend Project Map
+# SpatialScribe — Frontend Project Map
 
 > Reference guide for the `my-frontend/` Next.js app.
 > Stack: Next.js 16 · React 19 · TypeScript · Tailwind v4 · Zustand · React Query · TipTap v3

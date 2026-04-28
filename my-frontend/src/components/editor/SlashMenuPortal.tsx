@@ -51,7 +51,6 @@ function computePos(r: DOMRect): { top: number; left: number } {
 
 export function SlashMenuPortal({ children, rect }: SlashMenuPortalProps) {
   const [mounted, setMounted] = useState(false);
-  // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => { setMounted(true); }, []);
 
   const [pos, setPos] = useState({ top: 0, left: 0 });

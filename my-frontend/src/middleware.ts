@@ -64,10 +64,13 @@ export function middleware(request: NextRequest): NextResponse {
   // ── Classify the request path ─────────────────────────────────────────────
   // Auth-only: pages that logged-in users should not see
   const isAuthOnly = matchesAny(pathname, ['/login', '/register']);
-  // Public: Next.js internals, backend API routes, and static files
-  const isPublic   = pathname.startsWith('/_next') ||
+  // Public: landing page, Next.js internals, backend API routes, and static files.
+  // Use a trailing-extension regex instead of pathname.includes('.') to avoid
+  // false positives on routes like /user.profile or /api/v2.0/endpoint.
+  const isPublic   = pathname === '/'              ||
+                     pathname.startsWith('/_next') ||
                      pathname.startsWith('/api')    ||
-                     pathname.includes('.');
+                     /\.\w{1,6}$/.test(pathname);
   // Protected: everything else — covers dynamic routes like /:workspaceId/:pageId
   const isProtected = !isAuthOnly && !isPublic;
 

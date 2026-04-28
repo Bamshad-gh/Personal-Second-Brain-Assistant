@@ -67,7 +67,7 @@ const POPUP_HEIGHT = 280;
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const PageLinkPopup = forwardRef<PageLinkPopupHandle, PageLinkPopupProps>(
-  function PageLinkPopup({ query, rect, pages, onSelect, onClose }, ref) {
+  function PageLinkPopup({ query, rect, pages, onSelect }, ref) {
     // ── Portal mount guard — prevents SSR / pre-hydration createPortal calls ──
     const [mounted, setMounted] = useState(false);
     useEffect(() => { setMounted(true); }, []);
@@ -149,7 +149,7 @@ export const PageLinkPopup = forwardRef<PageLinkPopupHandle, PageLinkPopupProps>
           <div className="border-b border-neutral-800 px-3 py-2">
             <p className="text-xs text-neutral-500">
               {query ? (
-                <>Searching for <span className="text-neutral-300">"{query}"</span></>
+                <>Searching for <span className="text-neutral-300">&quot;{query}&quot;</span></>
               ) : (
                 'Type a page name…'
               )}

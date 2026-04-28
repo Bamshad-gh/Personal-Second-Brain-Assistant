@@ -111,7 +111,7 @@ class BlockTypesView(APIView):
       This endpoint automatically includes it. No other changes needed.
     """
 
-    permission_classes = []
+    permission_classes = [IsAuthenticated]
 
     def get(self, request):
         types = [
@@ -616,6 +616,28 @@ class FileUploadView(APIView):
         'video/mp4', 'video/webm', 'video/ogg',
     }
 
+    # Magic bytes → expected MIME type (first N bytes of file)
+    _MAGIC = [
+        (b'\xff\xd8\xff',       'image/jpeg'),
+        (b'\x89PNG\r\n\x1a\n', 'image/png'),
+        (b'GIF87a',             'image/gif'),
+        (b'GIF89a',             'image/gif'),
+        (b'%PDF-',              'application/pdf'),
+    ]
+
+    def _magic_ok(self, header: bytes, claimed: str) -> bool:
+        """Verify file header matches claimed content type."""
+        # Video containers and SVG use complex/text formats — skip magic check
+        if claimed in ('video/mp4', 'video/webm', 'video/ogg', 'image/svg+xml'):
+            return True
+        # WebP: bytes 0-3 = RIFF, bytes 8-11 = WEBP
+        if claimed == 'image/webp':
+            return header[:4] == b'RIFF' and header[8:12] == b'WEBP'
+        for magic, mime in self._MAGIC:
+            if header[:len(magic)] == magic:
+                return claimed == mime
+        return False
+
     def post(self, request):
         file = request.FILES.get('file')
         if not file:
@@ -632,7 +654,16 @@ class FileUploadView(APIView):
 
         if file.content_type not in self.ALLOWED_TYPES:
             return Response(
-                {'error': f'File type {file.content_type!r} is not allowed.'},
+                {'error': 'File type not allowed.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Validate actual file content matches declared MIME type
+        header = file.read(12)
+        file.seek(0)
+        if not self._magic_ok(header, file.content_type):
+            return Response(
+                {'error': 'File content does not match the declared type.'},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 

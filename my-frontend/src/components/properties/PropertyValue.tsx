@@ -188,7 +188,6 @@ export function PropertyValue({
 
   // Mount guard: useState+useEffect only — never typeof document !== 'undefined'
   const [mounted, setMounted] = useState(false);
-  // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => { setMounted(true); }, []);
 
   // triggerRef — the display button that opens the dropdown

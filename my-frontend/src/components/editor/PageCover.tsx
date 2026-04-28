@@ -236,6 +236,7 @@ export function PageCover({
             className="relative w-full h-10 overflow-hidden cursor-pointer group select-none"
             onClick={onExpandRequest}
           >
+            {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
               src={coverUrl!}
               alt="Page cover"
@@ -259,6 +260,7 @@ export function PageCover({
           onPointerUp={onPointerUp}
         >
           {/* Cover image */}
+          {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
             src={coverUrl!}
             alt="Page cover"
@@ -392,6 +394,7 @@ export function PageCover({
                         onClick={() => pickGalleryImage(img.url)}
                         className="group/img relative h-24 overflow-hidden rounded-lg ring-2 ring-transparent hover:ring-violet-500 transition-all"
                       >
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
                         <img
                           src={img.url}
                           alt={img.id}

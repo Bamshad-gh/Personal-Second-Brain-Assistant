@@ -172,7 +172,6 @@ export function GlobalAiAssistant({ workspaceId, currentPageId }: GlobalAiAssist
           context,
           page_id:  currentPageId,
         });
-        console.log('[GlobalAI agent response]', response);
         pushMessage({ role: 'assistant', content: response.message });
 
         // web_search is server-only — never surface it as a user-confirmable action

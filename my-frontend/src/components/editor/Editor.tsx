@@ -1311,7 +1311,7 @@ export const Editor = forwardRef<TipTapEditor, EditorProps>(function Editor({
 });
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-// TOOLBAR COMPONENTS — BubbleButton and ColorPickerButton
+// TOOLBAR COMPONENTS
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 function BubbleButton({
@@ -1341,36 +1341,3 @@ function BubbleButton({
   );
 }
 
-function ColorPickerButton({
-  onChange,
-  onReset,
-  title,
-}: {
-  onChange: (color: string) => void;
-  onReset:  () => void;
-  title:    string;
-}) {
-  const inputRef = useRef<HTMLInputElement>(null);
-
-  return (
-    <div className="relative">
-      <button
-        onClick={() => inputRef.current?.click()}
-        title={title}
-        className="flex h-7 w-7 items-center justify-center rounded-md text-sm text-neutral-400 transition-colors hover:bg-white/10 hover:text-neutral-200"
-        onContextMenu={(e) => { e.preventDefault(); onReset(); }}
-      >
-        <Palette size={13} />
-      </button>
-      {/* Right-click the palette button to reset color to default */}
-      <input
-        ref={inputRef}
-        type="color"
-        className="absolute left-0 top-0 h-0 w-0 opacity-0"
-        onChange={(e) => onChange(e.target.value)}
-        aria-hidden="true"
-        tabIndex={-1}
-      />
-    </div>
-  );
-}

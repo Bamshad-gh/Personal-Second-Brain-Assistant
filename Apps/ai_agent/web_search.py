@@ -30,7 +30,7 @@ except ImportError:
     _BS4_AVAILABLE = False
 
 _DDG_URL    = 'https://api.duckduckgo.com/'
-_USER_AGENT = 'Mozilla/5.0 (compatible; SecondBrainBot/1.0)'
+_USER_AGENT = 'Mozilla/5.0 (compatible; SpatialScribeBot/1.0)'
 
 
 # ─────────────────────────────────────────────────────────────────────────────

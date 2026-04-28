@@ -297,7 +297,6 @@ export function CodeBlock({ block, onSave, onDelete, readOnly = false }: CodeBlo
             className="flex-1 cursor-text overflow-x-auto whitespace-pre px-4 py-4
                        font-mono text-xs leading-6 text-neutral-200"
             style={{ height: contentHeight }}
-            // eslint-disable-next-line react/no-danger
             dangerouslySetInnerHTML={{ __html: highlightCode(code, language) }}
           />
         )}

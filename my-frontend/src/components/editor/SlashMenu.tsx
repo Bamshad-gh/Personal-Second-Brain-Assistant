@@ -206,6 +206,7 @@ export const COMMANDS: SlashCommandItem[] = [
     label:       'Image',
     description: 'Upload from your computer',
     group:       'Media & Code',
+    // eslint-disable-next-line jsx-a11y/alt-text
     icon:        <Image size={15} />,
     blockType:   'image',
     command:     deleteSlashTrigger,

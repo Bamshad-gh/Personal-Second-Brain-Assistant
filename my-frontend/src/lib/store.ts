@@ -175,6 +175,6 @@ export const useAppStore = create<AppStore>()(
         set({ aiPanelOpen: open }, false, 'ui/setAiPanelOpen');
       },
     }),
-    { name: 'SecondBrainStore' }, // name shows up in Redux DevTools
+    { name: 'SpatialScribeStore' }, // name shows up in Redux DevTools
   ),
 );

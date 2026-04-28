@@ -61,5 +61,5 @@ class UpdateProfileSerializer(serializers.ModelSerializer):
     """Write serializer for profile updates — intentionally limited fields."""
     class Meta:
         model  = User
-        fields = ['full_name', 'avatar', 'bio','full_name']
+        fields = ['full_name', 'avatar', 'bio']
 

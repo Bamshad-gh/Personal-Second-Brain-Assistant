@@ -180,14 +180,12 @@ export default function PageEditorRoute() {
 
   // Sync title when a different page loads.
   const [lastLoadedPageId, setLastLoadedPageId] = useState<string | null>(null);
-  /* eslint-disable react-hooks/set-state-in-effect */
   useEffect(() => {
     if (page?.id && page.id !== lastLoadedPageId) {
       setLastLoadedPageId(page.id);
       if (page.title !== undefined) setTitle(page.title);
     }
   }, [page?.id, page?.title]); // eslint-disable-line react-hooks/exhaustive-deps
-  /* eslint-enable react-hooks/set-state-in-effect */
 
   function handleTitleChange(e: React.ChangeEvent<HTMLInputElement>) {
     setTitle(e.target.value);

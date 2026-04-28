@@ -112,12 +112,15 @@ class AiActionView(APIView):
         except ValueError as e:
             # Invalid action_type — run_action() raises ValueError for unknown actions
             return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
-        except ImportError as e:
-            # Missing AI provider package (e.g. anthropic, openai not installed)
-            return Response({'error': str(e)}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
-        except Exception as e:
+        except ImportError:
+            return Response({'error': 'AI provider package not installed.'}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+        except Exception:
+            import logging
+            logging.getLogger(__name__).exception(
+                'AI action error user=%s action=%s', request.user.id, action_type
+            )
             return Response(
-                {'error': f'AI provider error: {str(e)}'},
+                {'error': 'AI provider error. Please try again.'},
                 status=status.HTTP_502_BAD_GATEWAY,
             )
 
@@ -212,9 +215,11 @@ class AiChatView(APIView):
             )
         except (ImportError, ValueError) as e:
             return Response({'error': str(e)}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
-        except Exception as e:
+        except Exception:
+            import logging
+            logging.getLogger(__name__).exception('AI chat error user=%s', request.user.id)
             return Response(
-                {'error': f'AI provider error: {str(e)}'},
+                {'error': 'AI provider error. Please try again.'},
                 status=status.HTTP_502_BAD_GATEWAY,
             )
 

@@ -270,7 +270,6 @@ export function TextBlock({
     timerId = setTimeout(tryFocus, 50);
     return () => clearTimeout(timerId);
   // editor intentionally included so a late-init editor triggers a retry
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [autoFocus, editor]);
 
   // ── Focus at end when previous block is deleted / block converted ────────────
@@ -303,14 +302,12 @@ export function TextBlock({
     timerId = setTimeout(tryFocus, 50);
     return () => clearTimeout(timerId);
   // editor is intentionally included so a late-init editor triggers a retry
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [focusAtEnd, editor]);
 
   // ── Sync content when block prop changes externally ───────────────────────
   // We only reload if the incoming text differs from what we last saved.
   // This prevents the server "echo" from overwriting TipTap's local undo history
   // (Ctrl+Z works correctly because we don't reset TipTap after our own saves).
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (!editor) return;
     const blockText = String(block.content.text ?? '');

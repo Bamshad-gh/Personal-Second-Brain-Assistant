@@ -45,8 +45,8 @@ export default function LoginPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
 
-  // Where to go after login — from middleware's ?from= param, or default to /
-  const redirectTo = searchParams.get('from') ?? '/';
+  // Where to go after login — from middleware's ?from= param, or default to /workspace
+  const redirectTo = searchParams.get('from') ?? '/workspace';
 
   // Pull the setUser action from Zustand to populate global state after login
   const setUser = useAppStore((state) => state.setUser);

@@ -370,7 +370,6 @@ export function MediaBlock({ block, onSave, onDelete, readOnly = false }: MediaB
   if (block.block_type === 'video') {
     return (
       <div className="group relative my-2">
-        {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
         <video src={url} controls className="max-w-full rounded-lg" />
         {!readOnly && (
           <button

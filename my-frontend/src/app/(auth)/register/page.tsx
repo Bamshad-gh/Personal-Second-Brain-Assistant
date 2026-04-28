@@ -84,7 +84,7 @@ export default function RegisterPage() {
       <div className="mb-6">
         <h1 className="text-xl font-semibold text-neutral-100">Create your account</h1>
         <p className="mt-1 text-sm text-neutral-400">
-          Start building your second brain today
+          Start building your spatial workspace today
         </p>
       </div>
 

@@ -82,8 +82,6 @@ export function DropdownMenu({ items, children, placement = 'left' }: DropdownMe
   const triggerRef              = useRef<HTMLDivElement>(null);
 
   // Portal mount guard — prevents SSR / pre-hydration createPortal calls.
-  // Intentional setState-in-effect: runs once, empty deps, no cascade risk.
-  // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => { setMounted(true); }, []);
 
   // ── Calculate dropdown position from trigger's bounding rect ──────────────

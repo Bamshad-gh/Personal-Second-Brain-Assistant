@@ -28,20 +28,13 @@ export default function AuthLayout({ children }: AuthLayoutProps) {
 
       {/* ── Brand mark ──────────────────────────────────────────────────── */}
       <div className="relative mb-8 flex flex-col items-center gap-2">
-        {/* Glowing logo */}
-        <div
-          className="flex h-11 w-11 items-center justify-center rounded-xl text-white text-lg font-bold"
-          style={{
-            background: 'linear-gradient(135deg, #7c3aed 0%, #a855f7 100%)',
-            boxShadow: '0 0 24px rgba(139,92,246,0.4)',
-          }}
-        >
-          S
-        </div>
+        {/* Logo image */}
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src="/logo.png" alt="SpatialScribe" style={{ height: '48px', width: 'auto' }} />
         <span className="text-lg font-semibold text-neutral-100 tracking-tight">
-          Second Brain
+          SpatialScribe
         </span>
-        <span className="text-xs text-neutral-500">Your personal workspace OS</span>
+        <span className="text-xs text-neutral-500">Your spatial workspace for ideas</span>
       </div>
 
       {/* ── Auth card — glowing gradient border ─────────────────────────── */}
@@ -62,7 +55,7 @@ export default function AuthLayout({ children }: AuthLayoutProps) {
 
       {/* ── Footer ────────────────────────────────────────────────────────── */}
       <p className="relative mt-8 text-xs text-neutral-700">
-        &copy; {new Date().getFullYear()} Second Brain
+        &copy; {new Date().getFullYear()} SpatialScribe
       </p>
     </div>
   );

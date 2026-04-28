@@ -15,7 +15,6 @@ import { useForm } from 'react-hook-form';
 import { Sparkles, Check } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useCreateWorkspace } from '@/hooks/useWorkspace';
-import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import type { CreateWorkspacePayload } from '@/types';
 

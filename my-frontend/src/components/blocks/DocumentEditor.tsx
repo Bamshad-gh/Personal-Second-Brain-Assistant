@@ -77,7 +77,6 @@ import type { Block, BlockType, BlockContent, UpdateBlockPayload } from '@/types
 
 const LIST_TYPES: BlockType[] = ['bullet_item', 'numbered_item', 'todo_item'];
 const EDGE_THRESHOLD          = 12;   // px from top/bottom edge to activate insertion line
-const COLUMN_EDGE_FRACTION    = 0.25; // rightmost fraction of block width for column-drop
 
 /** Convert a plain-text string (with \n line breaks) into TipTap JSON with HardBreak nodes.
  *  Used when AI actions return multi-line text that needs to render as actual line breaks. */
@@ -294,7 +293,6 @@ export function DocumentEditor({
       setSelectedId(newBlock.id);
       onFocusHandled?.();
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [allBlocks, pendingFocusBlockId, onFocusHandled]);
 
   // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -361,7 +359,6 @@ export function DocumentEditor({
     }
     document.addEventListener('mousedown', handleOutside);
     return () => document.removeEventListener('mousedown', handleOutside);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [contextMenuAnchor]);
 
   // Close slash menu when user clicks outside any editor and outside the menu
@@ -508,6 +505,7 @@ export function DocumentEditor({
     setFocusedId((prev) => (prev === blockId ? null : prev));
   }, []);
 
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const handleSlash = useCallback((_blockId: string, _query: string) => {
     // Handled by SlashCommand extension + slashEventBus
   }, []);

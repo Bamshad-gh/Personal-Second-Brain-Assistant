@@ -33,13 +33,16 @@ const inter = Inter({
 
 export const metadata: Metadata = {
   title: {
-    default: 'Second Brain — Your Personal Workspace',
-    template: '%s | Second Brain',
+    default: 'SpatialScribe',
+    template: '%s | SpatialScribe',
   },
-  description: 'A personal workspace for notes, projects, and ideas.',
+  description: 'Your spatial workspace for ideas, notes and AI',
+  icons: {
+    icon: '/logo.png',
+  },
   openGraph: {
-    title:       'Second Brain',
-    description: 'A personal workspace for notes, projects, and ideas.',
+    title:       'SpatialScribe',
+    description: 'Your spatial workspace for ideas, notes and AI',
     type:        'website',
   },
 }

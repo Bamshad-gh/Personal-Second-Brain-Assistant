@@ -64,8 +64,6 @@ export function useWorkspaces() {
  * Also syncs the Zustand activeWorkspace when data loads.
  */
 export function useWorkspace(id: string | null) {
-  const setActiveWorkspace = useAppStore((state) => state.setActiveWorkspace);
-
   return useQuery({
     queryKey: workspaceKeys.detail(id ?? ''),
     queryFn: () => workspaceApi.get(id!),
