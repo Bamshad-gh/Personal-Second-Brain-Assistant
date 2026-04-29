@@ -65,7 +65,7 @@ class AdminOverviewView(APIView):
 
         # ── User counts ───────────────────────────────────────────────────────
         total_users    = User.objects.count()
-        new_30d        = User.objects.filter(date_joined__gte=last_30).count()
+        new_30d        = User.objects.filter(created_at__gte=last_30).count()
         active_7d      = User.objects.filter(last_login__gte=last_7).count()
 
         # ── Content counts ────────────────────────────────────────────────────
@@ -141,7 +141,7 @@ class AdminUserListView(APIView):
             )
 
         total = qs.count()
-        users = qs.select_related('ai_quota').order_by('-date_joined')[offset:offset + limit]
+        users = qs.select_related('ai_quota').order_by('-created_at')[offset:offset + limit]
 
         today_start = timezone.now().replace(hour=0, minute=0, second=0, microsecond=0)
 
@@ -155,7 +155,7 @@ class AdminUserListView(APIView):
                 'id':              str(u.id),
                 'email':           u.email,
                 'username':        u.username,
-                'date_joined':     u.date_joined,
+                'created_at':     u.created_at,
                 'last_login':      u.last_login,
                 'is_staff':        u.is_staff,
                 'is_active':       u.is_active,
@@ -271,9 +271,9 @@ class AdminSecurityView(APIView):
 
         # Staff accounts created in the last 7 days (unexpected = risk signal)
         new_staff = list(
-            User.objects.filter(is_staff=True, date_joined__gte=last_7)
-            .values('email', 'date_joined')
-            .order_by('-date_joined')
+            User.objects.filter(is_staff=True, created_at__gte=last_7)
+            .values('email', 'created_at')
+            .order_by('-created_at')
         )
 
         # Users on the unlimited tier
@@ -287,7 +287,7 @@ class AdminSecurityView(APIView):
         # Accounts that joined 30+ days ago and have never logged in
         inactive_count = User.objects.filter(
             last_login__isnull=True,
-            date_joined__lt=now - timedelta(days=30),
+            created_at__lt=now - timedelta(days=30),
         ).count()
 
         return Response({

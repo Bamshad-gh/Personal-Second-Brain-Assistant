@@ -2,7 +2,7 @@ from .base import *
 import os
 
 DEBUG = False
-SECRET_KEY = os.environ['DJANGO_SECRET_KEY']
+SECRET_KEY = os.environ['SECRET_KEY']
 
 ALLOWED_HOSTS = [
     os.environ.get('DOMAIN', ''),
@@ -25,17 +25,20 @@ DATABASES = {
 # Security
 SECURE_BROWSER_XSS_FILTER      = True
 SECURE_CONTENT_TYPE_NOSNIFF    = True
-X_FRAME_OPTIONS                = 'DENY'
-SECURE_SSL_REDIRECT            = True
-SESSION_COOKIE_SECURE          = True
-CSRF_COOKIE_SECURE             = True
+X_FRAME_OPTIONS                = 'SAMEORIGIN'
+SECURE_SSL_REDIRECT            = False
+SESSION_COOKIE_SECURE          = False
+CSRF_COOKIE_SECURE             = False
+CSRF_TRUSTED_ORIGINS = ['http://37.27.42.231']
 SECURE_HSTS_SECONDS            = 31536000
 SECURE_HSTS_INCLUDE_SUBDOMAINS = True
 
 # CORS — allow Vercel frontend
 CORS_ALLOW_ALL_ORIGINS = False
 CORS_ALLOWED_ORIGINS = [
+    f"http://{os.environ.get('FRONTEND_DOMAIN', '')}",
     f"https://{os.environ.get('FRONTEND_DOMAIN', '')}",
+    'http://37.27.42.231',
     'https://spatialscribe.com',
     'https://www.spatialscribe.com',
 ]
