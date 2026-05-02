@@ -888,7 +888,7 @@ export function DocumentEditor({
             )}
 
             {/* ── AI quick-actions button — top-right of block border ────────── */}
-            {!readOnly && block.block_type !== 'code' && (
+            {!readOnly && block.block_type !== 'code' && block.block_type !== 'database' && (
               <button
                 type="button"
                 title="AI actions"

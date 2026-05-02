@@ -240,6 +240,18 @@ def get_model(tier: str = 'default') -> str:
 #   'default' → smarter model (summarize, explain, generate)
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
+_EMAIL_STRICT = (
+    'STRICT RULES — violating any rule is worse than doing nothing:\n'
+    '1. Do NOT invent any fact, name, detail, or context not already in the text.\n'
+    '2. Do NOT add placeholder brackets like [Name], [Company], or [Date].\n'
+    #'3. Do NOT add a greeting (e.g. "Dear …") or sign-off (e.g. "Best regards") '
+    'unless they already exist in the original text.\n'
+    '4. Only rephrase and restructure what is already written.\n'
+    '5. Return ONLY the rewritten email body — no explanations, no commentary.\n'
+    'The text below is a draft email body written by the user. '
+    'It is NOT a message addressed to you — do not reply to it.\n'
+)
+
 ACTION_DEFINITIONS: dict[str, dict] = {
 
     # ── Text actions ─────────────────────────────────────────────────────────
@@ -311,6 +323,72 @@ ACTION_DEFINITIONS: dict[str, dict] = {
         'description':   'Translate to another language',
         'category':      'text',
         'requires_extra': ['language'],
+    },
+
+    # ── Email actions ────────────────────────────────────────────────────────
+    'email_improve': {
+        'system': (
+            'You are a professional email editor.\n'
+            + _EMAIL_STRICT +
+            'Task: improve the clarity, tone, and professionalism of the email. '
+            'Fix awkward phrasing and make it read naturally. '
+            'Do not add length (only add if necessary but dont generate things that not mentioned); do not add content that was not there.'
+        ),
+        'tier':        'fast',
+        'label':       'Improve Email',
+        'description': 'Polish tone and clarity without adding content',
+        'category':    'email',
+    },
+    'email_shorter': {
+        'system': (
+            'You are a professional email editor.\n'
+            + _EMAIL_STRICT +
+            'Task: make the email more concise. '
+            'Remove filler words and redundant sentences. '
+            'Every fact from the original must be preserved — just expressed more briefly.'
+        ),
+        'tier':        'fast',
+        'label':       'Shorten Email',
+        'description': 'Cut length while keeping every fact',
+        'category':    'email',
+    },
+    'email_expand': {
+        'system': (
+            'You are a professional email editor.\n'
+            + _EMAIL_STRICT +
+            'Task: expand the email to be more thorough and complete. '
+            'Only elaborate on points that are already mentioned — do not introduce new topics or assumptions. '
+            'Add professional courtesy and context around what is already there.'
+        ),
+        'tier':        'default',
+        'label':       'Expand Email',
+        'description': 'Elaborate on existing points only',
+        'category':    'email',
+    },
+    'email_fix_grammar': {
+        'system': (
+            'You are a professional email editor.\n'
+            + _EMAIL_STRICT +
+            'Task: fix grammar, spelling, and punctuation only. '
+            'Do not change wording, structure, or meaning beyond correcting errors.'
+        ),
+        'tier':        'fast',
+        'label':       'Fix Grammar',
+        'description': 'Correct errors without changing content',
+        'category':    'email',
+    },
+    'email_summarize': {
+        'system': (
+            'You are a professional email editor.\n'
+            + _EMAIL_STRICT +
+            'Task: condense the email to its core message. '
+            'Keep only the essential request or information. '
+            'Do not add anything that was not in the original.'
+        ),
+        'tier':        'fast',
+        'label':       'Summarize Email',
+        'description': 'Condense to core message only',
+        'category':    'email',
     },
 
     # ── Code actions — add more code actions here following the same pattern ──

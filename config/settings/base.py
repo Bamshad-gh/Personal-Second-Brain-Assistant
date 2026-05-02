@@ -35,6 +35,9 @@ INSTALLED_APPS = [
     'Apps.relations',
     'Apps.ai_agent',
     'Apps.admin_dashboard',
+    'Apps.database',
+    'Apps.integrations',
+    'Apps.calendar_app',
 ]
 
 MIDDLEWARE = [
@@ -183,3 +186,16 @@ SOCIAL_AUTH_PIPELINE = (
 
 LOGIN_REDIRECT_URL  = '/dashboard/'
 LOGOUT_REDIRECT_URL = '/login/'
+
+# ── Email / Calendar / LinkedIn Integration OAuth ────────────────────────────
+GOOGLE_GMAIL_CLIENT_ID        = config('GOOGLE_GMAIL_CLIENT_ID',        default='')
+GOOGLE_GMAIL_CLIENT_SECRET    = config('GOOGLE_GMAIL_CLIENT_SECRET',    default='')
+GOOGLE_CALENDAR_CLIENT_ID     = config('GOOGLE_CALENDAR_CLIENT_ID',     default='')
+GOOGLE_CALENDAR_CLIENT_SECRET = config('GOOGLE_CALENDAR_CLIENT_SECRET', default='')
+OUTLOOK_CLIENT_ID             = config('OUTLOOK_CLIENT_ID',             default='')
+OUTLOOK_CLIENT_SECRET         = config('OUTLOOK_CLIENT_SECRET',         default='')
+LINKEDIN_CLIENT_ID            = config('LINKEDIN_CLIENT_ID',            default='')
+LINKEDIN_CLIENT_SECRET        = config('LINKEDIN_CLIENT_SECRET',        default='')
+INTEGRATION_TOKEN_SALT        = config('INTEGRATION_TOKEN_SALT',        default='spatialscribe-integrations-v1')
+BACKEND_BASE_URL              = config('BACKEND_BASE_URL',              default='http://localhost:8000')
+FRONTEND_BASE_URL             = config('FRONTEND_BASE_URL',             default='http://localhost:3000')

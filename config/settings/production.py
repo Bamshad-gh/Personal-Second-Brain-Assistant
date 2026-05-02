@@ -7,6 +7,8 @@ SECRET_KEY = os.environ['SECRET_KEY']
 ALLOWED_HOSTS = [
     os.environ.get('DOMAIN', ''),
     os.environ.get('VPS_IP', ''),
+    'spatialscribe.app',
+    'www.spatialscribe.app',
 ]
 
 # Database — PostgreSQL
@@ -29,18 +31,18 @@ X_FRAME_OPTIONS                = 'SAMEORIGIN'
 SECURE_SSL_REDIRECT            = False
 SESSION_COOKIE_SECURE          = False
 CSRF_COOKIE_SECURE             = False
-CSRF_TRUSTED_ORIGINS = ['http://37.27.42.231']
+CSRF_TRUSTED_ORIGINS = [
+    'https://spatialscribe.app',
+    'https://www.spatialscribe.app',
+]
 SECURE_HSTS_SECONDS            = 31536000
 SECURE_HSTS_INCLUDE_SUBDOMAINS = True
 
 # CORS — allow Vercel frontend
 CORS_ALLOW_ALL_ORIGINS = False
 CORS_ALLOWED_ORIGINS = [
-    f"http://{os.environ.get('FRONTEND_DOMAIN', '')}",
-    f"https://{os.environ.get('FRONTEND_DOMAIN', '')}",
-    'http://37.27.42.231',
-    'https://spatialscribe.com',
-    'https://www.spatialscribe.com',
+    'https://spatialscribe.app',
+    'https://www.spatialscribe.app',
 ]
 CORS_ALLOW_CREDENTIALS = True
 

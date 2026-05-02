@@ -67,6 +67,20 @@ import type {
   AiChatMessage,
   AiUsageSummary,
   ApiError,
+  DatabaseView,
+  DatabaseRow,
+  DatabaseCell,
+  DatabaseColumn,
+  CreateColumnPayload,
+  UpdateCellPayload,
+  EmailIntegration,
+  SmtpConnectPayload,
+  CalendarEvent,
+  CreateCalendarEventPayload,
+  InAppNotification,
+  LinkedInStatus,
+  ScheduledPost,
+  CreatePostPayload,
 } from '@/types';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1130,6 +1144,96 @@ export interface AdminSecurity {
   never_logged_in:    number;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// DATABASE API — database block views, rows, cells, columns
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const databaseApi = {
+  getView: async (blockId: string): Promise<DatabaseView> => {
+    const { data } = await axiosInstance.get<DatabaseView>(`/api/database/${blockId}/`);
+    return data;
+  },
+
+  updateView: async (
+    blockId: string,
+    payload: Partial<Pick<DatabaseView, 'view_type' | 'filters' | 'sorts' | 'hidden_fields' | 'custom_page_type'>>,
+  ): Promise<DatabaseView> => {
+    const { data } = await axiosInstance.patch<DatabaseView>(`/api/database/${blockId}/`, payload);
+    return data;
+  },
+
+  listRows: async (blockId: string): Promise<DatabaseRow[]> => {
+    const { data } = await axiosInstance.get<DatabaseRow[]>(`/api/database/${blockId}/rows/`);
+    return data;
+  },
+
+  createRow: async (blockId: string): Promise<DatabaseRow> => {
+    const { data } = await axiosInstance.post<DatabaseRow>(`/api/database/${blockId}/rows/`, {});
+    return data;
+  },
+
+  updateRow: async (
+    blockId: string,
+    rowId: string,
+    payload: { order?: number; page?: string | null },
+  ): Promise<DatabaseRow> => {
+    const { data } = await axiosInstance.patch<DatabaseRow>(
+      `/api/database/${blockId}/rows/${rowId}/`,
+      payload,
+    );
+    return data;
+  },
+
+  deleteRow: async (blockId: string, rowId: string): Promise<void> => {
+    await axiosInstance.delete(`/api/database/${blockId}/rows/${rowId}/`);
+  },
+
+  updateCell: async (
+    blockId: string,
+    rowId: string,
+    defId: string,
+    payload: UpdateCellPayload,
+  ): Promise<DatabaseCell> => {
+    const { data } = await axiosInstance.patch<DatabaseCell>(
+      `/api/database/${blockId}/rows/${rowId}/cells/${defId}/`,
+      payload,
+    );
+    return data;
+  },
+
+  createColumn: async (blockId: string, payload: CreateColumnPayload): Promise<DatabaseColumn> => {
+    const { data } = await axiosInstance.post<DatabaseColumn>(
+      `/api/database/${blockId}/columns/`,
+      payload,
+    );
+    return data;
+  },
+
+  updateColumn: async (
+    blockId: string,
+    colId: string,
+    payload: Partial<CreateColumnPayload & { order: number }>,
+  ): Promise<DatabaseColumn> => {
+    const { data } = await axiosInstance.patch<DatabaseColumn>(
+      `/api/database/${blockId}/columns/${colId}/`,
+      payload,
+    );
+    return data;
+  },
+
+  deleteColumn: async (blockId: string, colId: string): Promise<void> => {
+    await axiosInstance.delete(`/api/database/${blockId}/columns/${colId}/`);
+  },
+
+  sendEmail: async (
+    blockId: string,
+    payload: { to: string[]; subject: string; body: string },
+  ): Promise<{ sent: boolean; emails?: string[]; subject?: string; body?: string }> => {
+    const { data } = await axiosInstance.post(`/api/database/${blockId}/email/`, payload);
+    return data;
+  },
+};
+
 export const adminApi = {
   getOverview: (): Promise<AdminOverview> =>
     axiosInstance.get('/api/admin/overview/').then((r) => r.data),
@@ -1144,4 +1248,144 @@ export const adminApi = {
 
   getSecurity: (): Promise<AdminSecurity> =>
     axiosInstance.get('/api/admin/security/').then((r) => r.data),
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// INTEGRATIONS API — email accounts (Gmail, Outlook, SMTP)
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const integrationApi = {
+  listEmail: async (): Promise<EmailIntegration[]> => {
+    const { data } = await axiosInstance.get<EmailIntegration[]>('/api/integrations/email/');
+    return data;
+  },
+
+  connectSmtp: async (payload: SmtpConnectPayload): Promise<EmailIntegration> => {
+    const { data } = await axiosInstance.post<EmailIntegration>('/api/integrations/email/smtp/', payload);
+    return data;
+  },
+
+  getGmailOAuthUrl: async (): Promise<{ url: string }> => {
+    const { data } = await axiosInstance.get<{ url: string }>('/api/integrations/email/gmail/start/');
+    return data;
+  },
+
+  getOutlookOAuthUrl: async (): Promise<{ url: string }> => {
+    const { data } = await axiosInstance.get<{ url: string }>('/api/integrations/email/outlook/start/');
+    return data;
+  },
+
+  setDefault: async (id: string): Promise<EmailIntegration> => {
+    const { data } = await axiosInstance.post<EmailIntegration>(`/api/integrations/email/${id}/set-default/`);
+    return data;
+  },
+
+  test: async (id: string): Promise<{ sent: boolean }> => {
+    const { data } = await axiosInstance.post<{ sent: boolean }>(`/api/integrations/email/${id}/test/`);
+    return data;
+  },
+
+  removeEmail: async (id: string): Promise<void> => {
+    await axiosInstance.delete(`/api/integrations/email/${id}/`);
+  },
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CALENDAR API — events, notifications, Google Calendar sync
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const calendarApi = {
+  listEvents: async (params: { start?: string; end?: string; workspace?: string }): Promise<CalendarEvent[]> => {
+    const { data } = await axiosInstance.get<CalendarEvent[]>('/api/calendar/events/', { params });
+    return data;
+  },
+
+  createEvent: async (payload: CreateCalendarEventPayload): Promise<CalendarEvent> => {
+    const { data } = await axiosInstance.post<CalendarEvent>('/api/calendar/events/', payload);
+    return data;
+  },
+
+  updateEvent: async (id: string, payload: Partial<CreateCalendarEventPayload>): Promise<CalendarEvent> => {
+    const { data } = await axiosInstance.patch<CalendarEvent>(`/api/calendar/events/${id}/`, payload);
+    return data;
+  },
+
+  deleteEvent: async (id: string): Promise<void> => {
+    await axiosInstance.delete(`/api/calendar/events/${id}/`);
+  },
+
+  listUnreadNotifications: async (): Promise<InAppNotification[]> => {
+    const { data } = await axiosInstance.get<InAppNotification[]>('/api/calendar/notifications/unread/');
+    return data;
+  },
+
+  markRead: async (id: string): Promise<void> => {
+    await axiosInstance.post(`/api/calendar/notifications/${id}/read/`);
+  },
+
+  markAllRead: async (): Promise<void> => {
+    await axiosInstance.post('/api/calendar/notifications/read-all/');
+  },
+
+  getGoogleCalendarOAuthUrl: async (): Promise<{ url: string }> => {
+    const { data } = await axiosInstance.get<{ url: string }>('/api/integrations/calendar/google/start/');
+    return data;
+  },
+
+  syncGoogleCalendar: async (): Promise<{ pushed: number; pulled: number }> => {
+    const { data } = await axiosInstance.post<{ pushed: number; pulled: number }>(
+      '/api/integrations/calendar/google/sync/',
+    );
+    return data;
+  },
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// LINKEDIN API — OAuth connection, status, disconnect
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const linkedinApi = {
+  getOAuthUrl: async (): Promise<{ url: string }> => {
+    const { data } = await axiosInstance.get<{ url: string }>('/api/integrations/linkedin/start/');
+    return data;
+  },
+
+  getStatus: async (): Promise<LinkedInStatus> => {
+    const { data } = await axiosInstance.get<LinkedInStatus>('/api/integrations/linkedin/status/');
+    return data;
+  },
+
+  disconnect: async (): Promise<void> => {
+    await axiosInstance.delete('/api/integrations/linkedin/disconnect/');
+  },
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// POSTS API — LinkedIn scheduled posts, template resolution
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const postsApi = {
+  list: async (): Promise<ScheduledPost[]> => {
+    const { data } = await axiosInstance.get<ScheduledPost[]>('/api/integrations/posts/');
+    return data;
+  },
+
+  create: async (payload: CreatePostPayload): Promise<ScheduledPost> => {
+    const { data } = await axiosInstance.post<ScheduledPost>('/api/integrations/posts/', payload);
+    return data;
+  },
+
+  update: async (id: string, payload: Partial<CreatePostPayload>): Promise<ScheduledPost> => {
+    const { data } = await axiosInstance.patch<ScheduledPost>(`/api/integrations/posts/${id}/`, payload);
+    return data;
+  },
+
+  remove: async (id: string): Promise<void> => {
+    await axiosInstance.delete(`/api/integrations/posts/${id}/`);
+  },
+
+  postNow: async (id: string): Promise<ScheduledPost> => {
+    const { data } = await axiosInstance.post<ScheduledPost>(`/api/integrations/posts/${id}/post-now/`);
+    return data;
+  },
 };

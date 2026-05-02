@@ -37,6 +37,7 @@ import { useAppStore } from '@/lib/store';
 import { Sidebar } from '@/components/sidebar/Sidebar';
 import { AuthInitializer } from '@/components/AuthInitializer';
 import { GlobalAiAssistant } from '@/components/ai/GlobalAiAssistant';
+import { NotificationBell } from '@/components/calendar/NotificationBell';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -60,9 +61,9 @@ export function AppShellClient({ children }: AppShellClientProps) {
   const pageId      = params.pageId      ?? null;
 
   // ── Global state ──────────────────────────────────────────────────────────
-  const toggleSidebar    = useAppStore((s) => s.toggleSidebar);
-  const sidebarOpen      = useAppStore((s) => s.sidebarOpen);
-  const sidebarCollapsed = useAppStore((s) => s.sidebarCollapsed);
+  const toggleSidebar         = useAppStore((s) => s.toggleSidebar);
+  const toggleSidebarCollapse = useAppStore((s) => s.toggleSidebarCollapse);
+  const sidebarCollapsed      = useAppStore((s) => s.sidebarCollapsed);
 
   // ── Auth ready state ──────────────────────────────────────────────────────
   // Blocks the UI from rendering until AuthInitializer has restored the token.
@@ -120,15 +121,25 @@ export function AppShellClient({ children }: AppShellClientProps) {
           {/* Sidebar toggle — always visible so user can reopen closed sidebar */}
           {workspaceId && (
             <button
-              onClick={toggleSidebar}
+              onClick={() => {
+                if (typeof window !== 'undefined' && window.innerWidth >= 768) {
+                  toggleSidebarCollapse();
+                } else {
+                  toggleSidebar();
+                }
+              }}
               className="flex h-7 w-7 items-center justify-center rounded-md
                          text-neutral-500 hover:bg-neutral-800 hover:text-neutral-300
                          transition-colors shrink-0"
-              aria-label={sidebarOpen ? 'Close sidebar' : 'Open sidebar'}
+              aria-label="Toggle sidebar"
             >
               <Menu size={16} />
             </button>
           )}
+
+          <div className="ml-auto flex items-center gap-1">
+            <NotificationBell />
+          </div>
         </div>
 
         {/* ── Page content ──────────────────────────────────────────────────── */}

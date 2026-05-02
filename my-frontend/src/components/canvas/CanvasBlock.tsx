@@ -59,6 +59,7 @@ import { useEditor, EditorContent }     from '@tiptap/react';
 import StarterKit                       from '@tiptap/starter-kit';
 import { GripVertical, X, FileText }    from 'lucide-react';
 import { blockApi }                     from '@/lib/api';
+import { DatabaseBlock }                from '@/components/blocks/DatabaseBlock';
 import type { Block }                   from '@/types';
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -459,6 +460,7 @@ export function CanvasBlock({
             callout:        '💡 Callout',
             code:           '</> Code',
             divider:        '— Divider',
+            database:       '⊞ Database',
           };
           return (
             <span
@@ -514,12 +516,21 @@ export function CanvasBlock({
         {block.block_type === 'divider' && (
           <hr className="border-neutral-300 dark:border-neutral-700 my-2" />
         )}
+        {block.block_type === 'database' && (
+          <DatabaseBlock
+            block={block}
+            onDelete={() => {}}
+            readOnly={false}
+            isSelected={false}
+            isCanvas={true}
+          />
+        )}
         {block.block_type === 'column_container' && (
           <PlaceholderContent blockType="column layout" note="Edit in document mode" />
         )}
         {!['text', 'sticky', 'heading1', 'heading2', 'heading3', 'image', 'pdf', 'rich',
             'paragraph', 'quote', 'bullet_item', 'numbered_item', 'todo_item',
-            'callout', 'code', 'divider', 'column_container'].includes(block.block_type) && (
+            'callout', 'code', 'divider', 'column_container', 'database'].includes(block.block_type) && (
           <PlaceholderContent blockType={block.block_type} />
         )}
       </div>

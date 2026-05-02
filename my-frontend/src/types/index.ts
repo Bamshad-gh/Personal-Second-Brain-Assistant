@@ -124,6 +124,7 @@ export type BlockType =
   | 'ai_agent_block'
   // ── Data (future) ─────────────────────────────────────────────────────────
   | 'database'
+  | 'calendar'
   | 'spreadsheet'
   | 'form'
   | 'chart'
@@ -663,6 +664,73 @@ export interface CustomPageType {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// DATABASE BLOCK — mirrors Apps/database/ models
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface DatabaseFilter {
+  column_id: string;
+  operator:  'eq' | 'neq' | 'contains' | 'not_contains' | 'gt' | 'lt' | 'is_empty' | 'is_not_empty';
+  value:     string;
+}
+
+export interface DatabaseSort {
+  column_id: string;
+  direction: 'asc' | 'desc';
+}
+
+export interface DatabaseCell {
+  id:           string;
+  row:          string;   // DatabaseRow UUID
+  definition:   string;   // PropertyDefinition UUID
+  value_text:   string;
+  value_number: number | null;
+  value_date:   string | null;
+  value_bool:   boolean | null;
+  value_json:   unknown;
+}
+
+export interface DatabaseRow {
+  id:            string;
+  database_view: string;
+  page:          string | null;
+  order:         number;
+  cells:         DatabaseCell[];
+}
+
+export interface DatabaseColumn {
+  id:            string;
+  database_view: string;
+  order:         number;
+  definition:    PropertyDefinition;   // full nested object from serializer
+}
+
+export interface DatabaseView {
+  id:               string;
+  block:            string;
+  custom_page_type: string | null;
+  view_type:        string;
+  filters:          DatabaseFilter[];
+  sorts:            DatabaseSort[];
+  hidden_fields:    string[];
+  columns:          DatabaseColumn[];
+  row_count:        number;
+}
+
+export interface CreateColumnPayload {
+  name:      string;
+  prop_type: PropType;
+  options?:  SelectOption[];
+}
+
+export interface UpdateCellPayload {
+  value_text?:   string;
+  value_number?: number | null;
+  value_date?:   string | null;
+  value_bool?:   boolean | null;
+  value_json?:   unknown;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // GALLERY — curated cover images
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -695,4 +763,130 @@ export interface ApiError {
   detail?:    string;
   fields?:    Record<string, string[]>;
   statusCode: number;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// EMAIL INTEGRATIONS
+// ─────────────────────────────────────────────────────────────────────────────
+
+export type EmailProvider = 'gmail' | 'outlook' | 'smtp';
+
+export interface EmailIntegration {
+  id:            string;
+  provider:      EmailProvider;
+  label:         string;
+  email:         string;
+  is_default:    boolean;
+  smtp_host?:    string;
+  smtp_port?:    number | null;
+  smtp_use_tls?: boolean;
+  smtp_username?: string;
+  token_expiry?:  string | null;
+  created_at:    string;
+  updated_at:    string;
+}
+
+export interface SmtpConnectPayload {
+  host:     string;
+  port:     number;
+  use_tls:  boolean;
+  username: string;
+  password: string;
+  email:    string;
+  label:    string;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CALENDAR
+// ─────────────────────────────────────────────────────────────────────────────
+
+export type CalendarViewMode = 'month' | 'week' | 'day' | 'agenda';
+export type ReminderMethod   = 'email' | 'in_app';
+
+export interface EventReminderPayload {
+  method:         ReminderMethod;
+  minutes_before: number;
+}
+
+export interface EventReminder extends EventReminderPayload {
+  id:      string;
+  send_at: string;
+  sent:    boolean;
+}
+
+export interface CalendarEvent {
+  id:                  string;
+  title:               string;
+  description:         string;
+  location:            string;
+  start_dt:            string;
+  end_dt:              string;
+  all_day:             boolean;
+  color:               string;
+  recurrence:          Record<string, unknown> | null;
+  reminders:           EventReminder[];
+  google_event_id:     string;
+  google_calendar_id:  string;
+  workspace:           string | null;
+  created_at:          string;
+  updated_at:          string;
+}
+
+export interface CreateCalendarEventPayload {
+  title:        string;
+  start_dt:     string;
+  end_dt:       string;
+  description?: string;
+  location?:    string;
+  all_day?:     boolean;
+  color?:       string;
+  recurrence?:  Record<string, unknown> | null;
+  workspace?:   string;
+  reminders?:   EventReminderPayload[];
+}
+
+export interface InAppNotification {
+  id:         string;
+  notif_type: 'reminder' | 'system';
+  title:      string;
+  body:       string;
+  event:      string | null;
+  read:       boolean;
+  created_at: string;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// LINKEDIN / SCHEDULED POSTS
+// ─────────────────────────────────────────────────────────────────────────────
+
+export type SocialPlatform = 'linkedin';
+export type PostStatus     = 'draft' | 'scheduled' | 'sent' | 'failed';
+
+export interface LinkedInStatus {
+  connected:    boolean;
+  display_name: string;
+  token_expiry: string | null;
+}
+
+export interface ScheduledPost {
+  id:               string;
+  platform:         SocialPlatform;
+  status:           PostStatus;
+  content:          string;
+  template:         string;
+  scheduled_at:     string | null;
+  sent_at:          string | null;
+  error_log:        string;
+  platform_post_id: string;
+  source_row:       string | null;
+  created_at:       string;
+  updated_at:       string;
+}
+
+export interface CreatePostPayload {
+  platform:      SocialPlatform;
+  content?:      string;
+  template?:     string;
+  source_row?:   string;
+  scheduled_at?: string | null;
 }

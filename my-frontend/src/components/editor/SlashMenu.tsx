@@ -43,7 +43,7 @@ import {
   Type, Heading1, Heading2, Heading3,
   Code, Quote, CheckSquare, Minus,
   List, ListOrdered, ChevronRight, Image, Lightbulb,
-  FileText, Video, Table2,
+  FileText, Video, Table2, Database,
 } from 'lucide-react';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -51,7 +51,7 @@ import {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** The group header label shown above each section in the menu */
-type SlashCommandGroup = 'Basic Blocks' | 'Media & Code' | 'Advanced';
+type SlashCommandGroup = 'Basic Blocks' | 'Media & Code' | 'Advanced' | 'Data';
 
 export interface SlashCommandItem {
   id:          string;
@@ -247,6 +247,17 @@ export const COMMANDS: SlashCommandItem[] = [
     group:       'Advanced',
     icon:        <Lightbulb size={15} />,
     blockType:   'callout',
+    command:     deleteSlashTrigger,
+  },
+
+  // ── Data ──────────────────────────────────────────────────────────────────
+  {
+    id:          'database',
+    label:       'Database',
+    description: 'Spreadsheet-style table with typed columns',
+    group:       'Data',
+    icon:        <Database size={15} />,
+    blockType:   'database',
     command:     deleteSlashTrigger,
   },
 ];

@@ -40,6 +40,8 @@ import { MediaBlock }            from './MediaBlock';
 import { DividerBlock }          from './DividerBlock';
 import { TableBlock }            from './TableBlock';
 import { ColumnContainerBlock }  from './ColumnContainerBlock';
+import { DatabaseBlock }         from './DatabaseBlock';
+import { CalendarBlock }         from './CalendarBlock';
 import type { Block, BlockType } from '@/types';
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -216,6 +218,19 @@ export function BlockRenderer({
           readOnly={readOnly}
         />
       );
+
+    case 'database':
+      return (
+        <DatabaseBlock
+          block={block}
+          onDelete={del}
+          readOnly={readOnly}
+          isSelected={isSelected}
+        />
+      );
+
+    case 'calendar':
+      return <CalendarBlock block={block} readOnly={readOnly} />;
 
     // ── Column container ──────────────────────────────────────────────────────
     // Renders the column layout. Passes itself to ColumnContainerBlock as

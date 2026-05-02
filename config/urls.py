@@ -35,6 +35,15 @@ urlpatterns = [
 
     # Admin dashboard API (staff only — IsAdminUser permission on every view)
     path('api/admin/', include('Apps.admin_dashboard.urls')),
+
+    # Database block API (views, rows, cells, columns)
+    path('api/database/', include('Apps.database.urls')),
+
+    # Email / Calendar / LinkedIn integrations
+    path('api/integrations/', include('Apps.integrations.urls')),
+
+    # Calendar events and notifications
+    path('api/calendar/', include('Apps.calendar_app.urls')),
 ]
 
 # Serve media files in development

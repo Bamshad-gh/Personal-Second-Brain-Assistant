@@ -21,7 +21,7 @@ import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useRouter } from 'next/navigation';
 import { usePathname } from 'next/navigation';
-import { Plus, LogOut, Settings, PanelLeftClose, Layers, Network, Trash2 } from 'lucide-react';
+import { Plus, LogOut, Settings, PanelLeftClose, PanelLeftOpen, Layers, Network, Trash2 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useQuery } from '@tanstack/react-query';
 import { useAppStore } from '@/lib/store';
@@ -57,9 +57,10 @@ export function Sidebar({ workspaceId, activePageId }: SidebarProps) {
   const logout                = useAppStore((s) => s.logout);
   const activeWorkspace       = useAppStore((s) => s.activeWorkspace);
   const setActiveWorkspace    = useAppStore((s) => s.setActiveWorkspace);
-  const sidebarOpen           = useAppStore((s) => s.sidebarOpen);
-  const setSidebarOpen        = useAppStore((s) => s.setSidebarOpen);
-  const sidebarCollapsed      = useAppStore((s) => s.sidebarCollapsed);
+  const sidebarOpen              = useAppStore((s) => s.sidebarOpen);
+  const setSidebarOpen           = useAppStore((s) => s.setSidebarOpen);
+  const sidebarCollapsed         = useAppStore((s) => s.sidebarCollapsed);
+  const toggleSidebarCollapse    = useAppStore((s) => s.toggleSidebarCollapse);
 
   // ── Data ──────────────────────────────────────────────────────────────────
   const { data: workspaces = [] } = useWorkspaces();
@@ -174,6 +175,11 @@ export function Sidebar({ workspaceId, activePageId }: SidebarProps) {
   // ── Settings dropdown items ────────────────────────────────────────────────
   const settingsMenuItems = [
     {
+      label:   'Settings',
+      icon:    <Settings size={13} />,
+      onClick: () => router.push('/settings'),
+    },
+    {
       label:   'Delete workspace',
       icon:    <Trash2 size={13} />,
       variant: 'danger' as const,
@@ -230,67 +236,76 @@ export function Sidebar({ workspaceId, activePageId }: SidebarProps) {
       >
         {/* ── Header: workspace switcher + collapse button ───────────────── */}
         <div className="flex items-center gap-1 p-2 pt-3">
-          <div className="flex-1 min-w-0">
-            {displayWorkspace ? (
-              <WorkspaceSwitcher
-                activeWorkspace={displayWorkspace}
-                workspaces={workspaces}
-              />
-            ) : (
-              <div className="h-11 animate-pulse rounded-lg bg-neutral-800" />
-            )}
-          </div>
+          {!sidebarCollapsed && (
+            <div className="flex-1 min-w-0">
+              {displayWorkspace ? (
+                <WorkspaceSwitcher
+                  activeWorkspace={displayWorkspace}
+                  workspaces={workspaces}
+                />
+              ) : (
+                <div className="h-11 animate-pulse rounded-lg bg-neutral-800" />
+              )}
+            </div>
+          )}
           <button
-            onClick={() => setSidebarOpen(false)}
+            onClick={toggleSidebarCollapse}
             className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-neutral-600 hover:bg-neutral-800 hover:text-neutral-300 transition-colors"
-            title="Collapse sidebar"
+            title={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
           >
-            <PanelLeftClose size={14} />
+            {sidebarCollapsed ? <PanelLeftOpen size={14} /> : <PanelLeftClose size={14} />}
           </button>
         </div>
 
         {/* ── New page dropdown ──────────────────────────────────────────── */}
-        <div className="px-2 pb-2">
-          <DropdownMenu items={newPageMenuItems} placement="right">
-            <button
-              className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm text-neutral-400 transition-colors hover:bg-neutral-800 hover:text-neutral-200"
-            >
-              <Plus size={14} />
-              <span>New page</span>
-            </button>
-          </DropdownMenu>
-        </div>
+        {!sidebarCollapsed && (
+          <div className="px-2 pb-2">
+            <DropdownMenu items={newPageMenuItems} placement="right">
+              <button
+                className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm text-neutral-400 transition-colors hover:bg-neutral-800 hover:text-neutral-200"
+              >
+                <Plus size={14} />
+                <span>New page</span>
+              </button>
+            </DropdownMenu>
+          </div>
+        )}
 
         {/* ── Divider ───────────────────────────────────────────────────── */}
         <div className="mx-2 border-t border-neutral-800" />
 
-        {/* ── Page tree (scrollable) ─────────────────────────────────────── */}
-        <div className="flex-1 overflow-y-auto py-2">
-          {pagesLoading ? (
-            <div className="space-y-1 px-2">
-              {[...Array(5)].map((_, i) => (
-                <div key={i} className="h-7 animate-pulse rounded-md bg-neutral-800" />
-              ))}
-            </div>
-          ) : (
-            <PageTree
-              pages={pages}
-              activePageId={activePageId}
-              workspaceId={workspaceId}
-              customTypes={customTypes}
-              onCreatePage={handleCreatePage}
-              onUpdatePage={handleUpdatePage}
-              onDeletePage={handleDeletePage}
-            />
-          )}
-        </div>
+        {/* ── Page tree (scrollable) — hidden in rail mode ───────────────── */}
+        {sidebarCollapsed ? (
+          <div className="flex-1" />
+        ) : (
+          <div className="flex-1 overflow-y-auto py-2">
+            {pagesLoading ? (
+              <div className="space-y-1 px-2">
+                {[...Array(5)].map((_, i) => (
+                  <div key={i} className="h-7 animate-pulse rounded-md bg-neutral-800" />
+                ))}
+              </div>
+            ) : (
+              <PageTree
+                pages={pages}
+                activePageId={activePageId}
+                workspaceId={workspaceId}
+                customTypes={customTypes}
+                onCreatePage={handleCreatePage}
+                onUpdatePage={handleUpdatePage}
+                onDeletePage={handleDeletePage}
+              />
+            )}
+          </div>
+        )}
 
-        {/* ── Knowledge Graph link ───────────────────────────────────────── */}
+        {/* ── Knowledge Graph link ──────────────────────────────────────── */}
         <div className="mx-2 mb-1">
           <button
             onClick={() => router.push(`/${workspaceId}/graph`)}
             className={[
               'flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-xs transition-colors',
+              sidebarCollapsed ? 'justify-center px-0' : '',
               isGraphActive
                 ? 'bg-violet-900/30 text-violet-400'
                 : 'text-neutral-600 hover:bg-neutral-800 hover:text-neutral-400',
@@ -298,7 +313,7 @@ export function Sidebar({ workspaceId, activePageId }: SidebarProps) {
             title="Knowledge Graph"
           >
             <Network size={13} />
-            <span>Knowledge Graph</span>
+            {!sidebarCollapsed && <span>Knowledge Graph</span>}
           </button>
         </div>
 
@@ -321,52 +336,58 @@ export function Sidebar({ workspaceId, activePageId }: SidebarProps) {
               {user?.full_name?.[0]?.toUpperCase() ?? '?'}
             </div>
 
-            <div className="flex-1 min-w-0">
-              <p className="truncate text-xs font-medium text-neutral-200">
-                {user?.display_name ?? user?.full_name ?? 'You'}
-              </p>
-              <p className="truncate text-xs text-neutral-500">
-                {aiUsage != null
-                  ? `${aiUsage.calls_this_month} AI calls this month`
-                  : user?.email}
-              </p>
-            </div>
+            {!sidebarCollapsed && (
+              <div className="flex-1 min-w-0">
+                <p className="truncate text-xs font-medium text-neutral-200">
+                  {user?.display_name ?? user?.full_name ?? 'You'}
+                </p>
+                <p className="truncate text-xs text-neutral-500">
+                  {aiUsage != null
+                    ? `${aiUsage.calls_this_month} AI calls this month`
+                    : user?.email}
+                </p>
+              </div>
+            )}
 
-            {/* Settings dropdown — contains workspace management actions */}
-            <DropdownMenu items={settingsMenuItems} placement="left">
-              <button
-                className="flex h-6 w-6 items-center justify-center rounded text-neutral-600 hover:bg-neutral-700 hover:text-neutral-300 transition-colors"
-                title="Workspace settings"
-              >
-                <Settings size={13} />
-              </button>
-            </DropdownMenu>
+            {!sidebarCollapsed && (
+              <>
+                {/* Settings dropdown — Settings page + Delete workspace */}
+                <DropdownMenu items={settingsMenuItems} placement="left">
+                  <button
+                    className="flex h-6 w-6 items-center justify-center rounded text-neutral-600 hover:bg-neutral-700 hover:text-neutral-300 transition-colors"
+                    title="Settings"
+                  >
+                    <Settings size={13} />
+                  </button>
+                </DropdownMenu>
 
-            {/* Page type manager toggle */}
-            <button
-              onClick={() => setCustomTypeManagerOpen((v) => !v)}
-              className={[
-                'flex h-6 w-6 items-center justify-center rounded transition-colors',
-                customTypeManagerOpen
-                  ? 'bg-violet-700 text-white'
-                  : 'text-neutral-600 hover:bg-neutral-700 hover:text-neutral-300',
-              ].join(' ')}
-              title="Manage page types"
-            >
-              <Layers size={13} />
-            </button>
+                {/* Page type manager toggle */}
+                <button
+                  onClick={() => setCustomTypeManagerOpen((v) => !v)}
+                  className={[
+                    'flex h-6 w-6 items-center justify-center rounded transition-colors',
+                    customTypeManagerOpen
+                      ? 'bg-violet-700 text-white'
+                      : 'text-neutral-600 hover:bg-neutral-700 hover:text-neutral-300',
+                  ].join(' ')}
+                  title="Manage page types"
+                >
+                  <Layers size={13} />
+                </button>
 
-            {/* Theme toggle */}
-            <ThemeToggle />
+                {/* Theme toggle */}
+                <ThemeToggle />
 
-            {/* Logout button */}
-            <button
-              onClick={handleLogout}
-              className="flex h-6 w-6 items-center justify-center rounded text-neutral-600 hover:bg-neutral-700 hover:text-red-400 transition-colors"
-              title="Sign out"
-            >
-              <LogOut size={13} />
-            </button>
+                {/* Logout button */}
+                <button
+                  onClick={handleLogout}
+                  className="flex h-6 w-6 items-center justify-center rounded text-neutral-600 hover:bg-neutral-700 hover:text-red-400 transition-colors"
+                  title="Sign out"
+                >
+                  <LogOut size={13} />
+                </button>
+              </>
+            )}
           </div>
         </div>
       </aside>
