@@ -50,9 +50,13 @@ def _send_via_gmail(integration: EmailIntegration, to: list[str], subject: str, 
         client_secret=settings.GOOGLE_GMAIL_CLIENT_SECRET,
     )
     if expiry:
-        creds.expiry = expiry if isinstance(expiry, datetime) else datetime.fromisoformat(str(expiry))
+    import datetime as _dt
+    _expiry = expiry if isinstance(expiry, _dt.datetime) else _dt.datetime.fromisoformat(str(expiry))
+    if _expiry.tzinfo is None:
+        _expiry = _expiry.replace(tzinfo=_dt.timezone.utc)
+    creds.expiry = _expiry
 
-    if creds.expired and creds.refresh_token:
+    if creds.refresh_token:
         creds.refresh(Request())
         # Persist refreshed token
         from .crypto import encrypt_token
