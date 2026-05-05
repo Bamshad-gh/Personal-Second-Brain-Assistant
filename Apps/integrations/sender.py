@@ -17,6 +17,7 @@ from email.mime.multipart import MIMEMultipart
 
 from django.conf import settings
 from django.core.mail import send_mail
+from werkzeug import Request
 
 from .crypto import decrypt_token
 from .models import EmailIntegration
@@ -50,11 +51,11 @@ def _send_via_gmail(integration: EmailIntegration, to: list[str], subject: str, 
         client_secret=settings.GOOGLE_GMAIL_CLIENT_SECRET,
     )
     if expiry:
-    import datetime as _dt
-    _expiry = expiry if isinstance(expiry, _dt.datetime) else _dt.datetime.fromisoformat(str(expiry))
-    if _expiry.tzinfo is None:
-        _expiry = _expiry.replace(tzinfo=_dt.timezone.utc)
-    creds.expiry = _expiry
+        import datetime as _dt
+        _expiry = expiry if isinstance(expiry, _dt.datetime) else _dt.datetime.fromisoformat(str(expiry))
+        if _expiry.tzinfo is None:
+            _expiry = _expiry.replace(tzinfo=_dt.timezone.utc)
+        creds.expiry = _expiry
 
     if creds.refresh_token:
         creds.refresh(Request())
