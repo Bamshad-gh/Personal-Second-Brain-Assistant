@@ -15,8 +15,10 @@
 
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Sparkles, X, Send, Minimize2, Trash2 } from 'lucide-react';
-import { aiApi, workspaceApi, blockApi } from '@/lib/api';
+import { Sparkles, X, Send, Minimize2, Trash2, Copy, Check } from 'lucide-react';
+import toast from 'react-hot-toast';
+import { aiApi, workspaceApi, blockApi, pageApi } from '@/lib/api';
+import { MarkdownMessage } from '@/components/ai/MarkdownMessage';
 import type { AiChatMessage } from '@/types';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -91,6 +93,7 @@ export function GlobalAiAssistant({ workspaceId, currentPageId }: GlobalAiAssist
   const [agentMode,     setAgentMode]     = useState(false);
   const [pendingAction, setPendingAction] = useState<PendingAction | null>(null);
   const [executing,     setExecuting]     = useState(false);
+  const [copiedMsgId,   setCopiedMsgId]   = useState<number | null>(null);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef       = useRef<HTMLTextAreaElement>(null);
@@ -113,6 +116,14 @@ export function GlobalAiAssistant({ workspaceId, currentPageId }: GlobalAiAssist
     queryFn:  () => workspaceApi.getContext(workspaceId),
     staleTime: 1000 * 60 * 5,
     enabled:   isOpen && !!workspaceId,
+  });
+
+  // Fetch current page title for the context badge (cache hit when user is on a page)
+  const { data: currentPage } = useQuery({
+    queryKey: ['page', currentPageId],
+    queryFn:  () => pageApi.get(currentPageId!),
+    staleTime: 1000 * 60 * 5,
+    enabled:   !!currentPageId,
   });
 
   // Auto-scroll to bottom on new messages or pending action
@@ -138,9 +149,16 @@ export function GlobalAiAssistant({ workspaceId, currentPageId }: GlobalAiAssist
   // ── Clear history ─────────────────────────────────────────────────────────
 
   function clearHistory() {
+    if (!window.confirm('Clear all messages? This cannot be undone.')) return;
     setMessages([]);
     setPendingAction(null);
     try { localStorage.removeItem(storageKey(workspaceId)); } catch { /* ignore */ }
+  }
+
+  async function copyMessage(content: string, idx: number) {
+    await navigator.clipboard.writeText(content);
+    setCopiedMsgId(idx);
+    setTimeout(() => setCopiedMsgId(null), 2000);
   }
 
   // ── Send message ──────────────────────────────────────────────────────────
@@ -312,6 +330,21 @@ export function GlobalAiAssistant({ workspaceId, currentPageId }: GlobalAiAssist
     }
   }
 
+  function handleInputChange(e: React.ChangeEvent<HTMLTextAreaElement>) {
+    setInput(e.target.value);
+    const el = e.target;
+    el.style.height = 'auto';
+    el.style.height = `${Math.min(el.scrollHeight, 120)}px`;
+  }
+
+  function handlePaste(e: React.ClipboardEvent<HTMLTextAreaElement>) {
+    const hasImage = Array.from(e.clipboardData.items).some((item) => item.type.startsWith('image/'));
+    if (hasImage) {
+      e.preventDefault();
+      toast('Image input coming soon', { icon: '🖼️' });
+    }
+  }
+
   // ── Render ────────────────────────────────────────────────────────────────
 
   return (
@@ -358,8 +391,8 @@ export function GlobalAiAssistant({ workspaceId, currentPageId }: GlobalAiAssist
                 </span>
               )}
               {currentPageId && (
-                <span className="text-[9px] text-violet-500/70 truncate">
-                  · on page
+                <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-violet-900/30 border border-violet-700/40 px-1.5 py-px text-[9px] text-violet-400 max-w-27.5 truncate">
+                  📄 {currentPage?.title || 'Page context'}
                 </span>
               )}
             </div>
@@ -425,7 +458,9 @@ export function GlobalAiAssistant({ workspaceId, currentPageId }: GlobalAiAssist
                 </div>
                 <div className="space-y-1">
                   <p className="text-xs text-neutral-500">
-                    {currentPageId
+                    {currentPageId && currentPage?.title
+                      ? <>Ready to help with <span className="font-medium text-neutral-300">{currentPage.title}</span>.</>
+                      : currentPageId
                       ? 'I know this page and all workspace pages.'
                       : 'Ask anything about your workspace.'}
                   </p>
@@ -449,13 +484,29 @@ export function GlobalAiAssistant({ workspaceId, currentPageId }: GlobalAiAssist
               <div
                 key={i}
                 className={[
-                  'max-w-[85%] rounded-xl px-3 py-2 text-sm leading-relaxed whitespace-pre-wrap',
+                  'group relative max-w-[85%] rounded-xl px-3 py-2 text-sm leading-relaxed',
                   msg.role === 'user'
                     ? 'ml-auto bg-violet-600 text-white'
                     : 'bg-neutral-800 text-neutral-200',
                 ].join(' ')}
               >
-                {msg.content}
+                <MarkdownMessage content={msg.content} />
+                {/* Hover actions */}
+                <div className={[
+                  'absolute -top-6 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity',
+                  msg.role === 'user' ? 'right-0' : 'left-0',
+                ].join(' ')}>
+                  <button
+                    onClick={() => copyMessage(msg.content, i)}
+                    className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px]
+                               bg-neutral-800 border border-neutral-700 text-neutral-400
+                               hover:text-neutral-200 transition-colors"
+                  >
+                    {copiedMsgId === i
+                      ? <><Check size={9} className="text-violet-400" /> Copied</>
+                      : <><Copy size={9} /> Copy</>}
+                  </button>
+                </div>
               </div>
             ))}
 
@@ -467,14 +518,17 @@ export function GlobalAiAssistant({ workspaceId, currentPageId }: GlobalAiAssist
                     <span>Searching the web…</span>
                   </span>
                 ) : (
-                  <div className="flex gap-1">
-                    {[0, 1, 2].map((i) => (
-                      <div
-                        key={i}
-                        className="w-1.5 h-1.5 rounded-full bg-violet-400 animate-bounce"
-                        style={{ animationDelay: `${i * 0.15}s` }}
-                      />
-                    ))}
+                  <div className="flex items-center gap-2">
+                    <div className="flex gap-1">
+                      {[0, 1, 2].map((i) => (
+                        <div
+                          key={i}
+                          className="w-1.5 h-1.5 rounded-full bg-violet-400 animate-bounce"
+                          style={{ animationDelay: `${i * 0.15}s` }}
+                        />
+                      ))}
+                    </div>
+                    <span className="text-xs text-neutral-500">AI is thinking…</span>
                   </div>
                 )}
               </div>
@@ -551,9 +605,10 @@ export function GlobalAiAssistant({ workspaceId, currentPageId }: GlobalAiAssist
               <textarea
                 ref={inputRef}
                 value={input}
-                onChange={(e) => setInput(e.target.value)}
+                onChange={handleInputChange}
                 onKeyDown={handleKeyDown}
-                rows={2}
+                onPaste={handlePaste}
+                rows={1}
                 disabled={loading}
                 placeholder={
                   agentMode
@@ -564,6 +619,7 @@ export function GlobalAiAssistant({ workspaceId, currentPageId }: GlobalAiAssist
                 }
                 className="flex-1 resize-none bg-transparent text-sm text-neutral-200
                            placeholder-neutral-600 outline-none disabled:opacity-50"
+                style={{ minHeight: '24px', maxHeight: '120px' }}
               />
               <button
                 onClick={sendMessage}
@@ -578,11 +634,18 @@ export function GlobalAiAssistant({ workspaceId, currentPageId }: GlobalAiAssist
                 <Send size={13} />
               </button>
             </div>
-            <p className="mt-1.5 text-[10px] text-neutral-700">
-              {agentMode
-                ? 'Agent mode · approval required before changes'
-                : 'Shift+Enter for new line · history saved locally'}
-            </p>
+            <div className="mt-1.5 flex items-center justify-between">
+              <p className="text-[10px] text-neutral-700">
+                {agentMode
+                  ? 'Agent mode · approval required before changes'
+                  : 'Shift+Enter for new line · history saved locally'}
+              </p>
+              {input.length > 500 && (
+                <span className={`text-[10px] ${input.length > 3000 ? 'text-red-400' : 'text-neutral-600'}`}>
+                  {input.length}/3000
+                </span>
+              )}
+            </div>
           </div>
         </div>
       )}

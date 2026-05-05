@@ -37,6 +37,7 @@ import {
 import toast from 'react-hot-toast';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { aiApi } from '@/lib/api';
+import { MarkdownMessage } from '@/components/ai/MarkdownMessage';
 import type { AiChatMessage, AiActionDefinition, AiQuota } from '@/types';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -83,6 +84,8 @@ interface AiPanelProps {
   /** Full text from the editor — used as fallback when no text is selected */
   pageContent:             string;
   onClose:                 () => void;
+  /** Page title shown in panel header and welcome message */
+  pageTitle?:              string;
   /** When non-empty: actions run on this text instead of pageContent */
   selectedText?:           string;
   /** Called when the user clicks "Insert" in the result panel */
@@ -106,6 +109,7 @@ export function AiPanel({
   workspaceId,
   pageContent,
   onClose,
+  pageTitle,
   selectedText,
   onInsertResult,
   pendingAction,
@@ -137,6 +141,7 @@ export function AiPanel({
   const [agentMode,     setAgentMode]     = useState(false);
   const [pendingAgent,  setPendingAgent]  = useState<AgentResponse | null>(null);
   const [isExecuting,   setIsExecuting]   = useState(false);
+  const [copiedMsgId,   setCopiedMsgId]   = useState<number | null>(null);
 
   // Auto-scroll chat to bottom when new messages arrive
   useEffect(() => {
@@ -289,6 +294,29 @@ export function AiPanel({
     }
   }
 
+  // ── Chat input helpers ─────────────────────────────────────────────────────
+
+  async function copyMessage(content: string, idx: number) {
+    await navigator.clipboard.writeText(content);
+    setCopiedMsgId(idx);
+    setTimeout(() => setCopiedMsgId(null), 2000);
+  }
+
+  function handleChatInputChange(e: React.ChangeEvent<HTMLTextAreaElement>) {
+    setChatInput(e.target.value);
+    const el = e.target;
+    el.style.height = 'auto';
+    el.style.height = `${Math.min(el.scrollHeight, 120)}px`;
+  }
+
+  function handleChatPaste(e: React.ClipboardEvent<HTMLTextAreaElement>) {
+    const hasImage = Array.from(e.clipboardData.items).some((item) => item.type.startsWith('image/'));
+    if (hasImage) {
+      e.preventDefault();
+      toast('Image input coming soon', { icon: '🖼️' });
+    }
+  }
+
   // ── Chat send handler ──────────────────────────────────────────────────────
 
   async function sendMessage() {
@@ -358,15 +386,26 @@ export function AiPanel({
       {/* ── Header ────────────────────────────────────────────────────────── */}
       <div className="flex items-center gap-2 border-b border-neutral-800 px-4 py-3">
         <div
-          className="flex h-6 w-6 items-center justify-center rounded-md"
+          className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md"
           style={{ background: 'linear-gradient(135deg, #7c3aed 0%, #a855f7 100%)' }}
         >
           <Sparkles size={12} className="text-white" />
         </div>
-        <span className="flex-1 text-sm font-semibold text-neutral-200">AI Assistant</span>
+        <div className="flex-1 min-w-0">
+          <div className="text-sm font-semibold text-neutral-200">AI Assistant</div>
+          {pageTitle && (
+            <div className="flex items-center gap-1 mt-0.5">
+              <span className="text-[10px] text-neutral-600">📄</span>
+              <span className="text-[10px] text-neutral-500 truncate">{pageTitle}</span>
+              <span className="inline-flex shrink-0 items-center rounded-full bg-violet-900/30 border border-violet-700/40 px-1.5 py-px text-[9px] text-violet-400">
+                context active
+              </span>
+            </div>
+          )}
+        </div>
         <button
           onClick={onClose}
-          className="flex h-6 w-6 items-center justify-center rounded text-neutral-600 hover:bg-neutral-800 hover:text-neutral-300 transition-colors"
+          className="flex h-6 w-6 shrink-0 items-center justify-center rounded text-neutral-600 hover:bg-neutral-800 hover:text-neutral-300 transition-colors"
         >
           <X size={14} />
         </button>
@@ -600,10 +639,22 @@ export function AiPanel({
                 >
                   <FileText size={18} className="text-violet-400" />
                 </div>
-                <p className="text-xs text-neutral-500 leading-relaxed px-2">
-                  Ask anything about this page, or any general question.
-                  The AI has access to your page content as context.
-                </p>
+                {pageTitle ? (
+                  <div className="space-y-1 px-2">
+                    <p className="text-xs text-neutral-400">
+                      Ready to help with{' '}
+                      <span className="font-medium text-neutral-200">{pageTitle}</span>
+                    </p>
+                    <p className="text-[10px] text-neutral-600">
+                      Ask anything about this page or your workspace.
+                    </p>
+                  </div>
+                ) : (
+                  <p className="text-xs text-neutral-500 leading-relaxed px-2">
+                    Ask anything about this page, or any general question.
+                    The AI has access to your page content as context.
+                  </p>
+                )}
               </div>
             )}
 
@@ -611,7 +662,7 @@ export function AiPanel({
               <div
                 key={i}
                 className={[
-                  'rounded-xl px-3 py-2.5 text-sm leading-relaxed',
+                  'group relative rounded-xl px-3 py-2.5 text-sm leading-relaxed',
                   msg.role === 'user'
                     ? 'bg-violet-600/15 text-neutral-200 ml-4'
                     : 'bg-neutral-800/60 text-neutral-300 mr-4',
@@ -620,7 +671,33 @@ export function AiPanel({
                 <p className="text-[10px] font-semibold uppercase tracking-wider mb-1 text-neutral-600">
                   {msg.role === 'user' ? 'You' : 'AI'}
                 </p>
-                <span className="whitespace-pre-wrap">{msg.content}</span>
+                <MarkdownMessage content={msg.content} />
+                {/* Hover copy action */}
+                <div className={[
+                  'absolute -top-6 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity',
+                  msg.role === 'user' ? 'right-0' : 'left-0',
+                ].join(' ')}>
+                  <button
+                    onClick={() => copyMessage(msg.content, i)}
+                    className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px]
+                               bg-neutral-800 border border-neutral-700 text-neutral-400
+                               hover:text-neutral-200 transition-colors"
+                  >
+                    {copiedMsgId === i
+                      ? <><Check size={9} className="text-violet-400" /> Copied</>
+                      : <><Copy size={9} /> Copy</>}
+                  </button>
+                  {msg.role === 'assistant' && onInsertResult && (
+                    <button
+                      onClick={() => onInsertResult(msg.content)}
+                      className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px]
+                                 bg-neutral-800 border border-neutral-700 text-neutral-400
+                                 hover:text-violet-300 transition-colors"
+                    >
+                      <Plus size={9} /> Insert
+                    </button>
+                  )}
+                </div>
               </div>
             ))}
 
@@ -705,17 +782,19 @@ export function AiPanel({
             <div className="flex items-end gap-2 rounded-xl border border-neutral-700 bg-neutral-800/40 px-3 py-2 focus-within:border-violet-500/50 transition-colors">
               <textarea
                 value={chatInput}
-                onChange={(e) => setChatInput(e.target.value)}
+                onChange={handleChatInputChange}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter' && !e.shiftKey) {
                     e.preventDefault();
                     sendMessage();
                   }
                 }}
+                onPaste={handleChatPaste}
                 placeholder="Ask anything… (Enter to send)"
-                rows={2}
+                rows={1}
                 disabled={isChatting}
                 className="flex-1 resize-none bg-transparent text-sm text-neutral-200 placeholder-neutral-600 outline-none disabled:opacity-50"
+                style={{ minHeight: '24px', maxHeight: '120px' }}
               />
               <button
                 onClick={sendMessage}
@@ -730,9 +809,16 @@ export function AiPanel({
                 <Send size={13} />
               </button>
             </div>
-            <p className="mt-1.5 text-[10px] text-neutral-700">
-              Shift+Enter for new line · Uses page content as context
-            </p>
+            <div className="mt-1.5 flex items-center justify-between">
+              <p className="text-[10px] text-neutral-700">
+                Shift+Enter for new line · Uses page content as context
+              </p>
+              {chatInput.length > 500 && (
+                <span className={`text-[10px] ${chatInput.length > 3000 ? 'text-red-400' : 'text-neutral-600'}`}>
+                  {chatInput.length}/3000
+                </span>
+              )}
+            </div>
           </div>
         </div>
       )}

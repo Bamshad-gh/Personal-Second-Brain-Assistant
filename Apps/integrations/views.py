@@ -174,6 +174,10 @@ class GmailOAuthStartView(APIView):
             scopes=['https://www.googleapis.com/auth/gmail.send'],
         )
         flow.redirect_uri = redirect_uri
+        # Disable PKCE — the verifier is generated in this request but lost before
+        # the callback creates a fresh Flow object, causing invalid_grant errors.
+        # We use a signed state parameter for CSRF protection instead.
+        flow.oauth2session.code_challenge_method = None
 
         auth_url, _ = flow.authorization_url(
             access_type='offline',
@@ -231,6 +235,7 @@ class GmailOAuthCallbackView(APIView):
                 state=state,
             )
             flow.redirect_uri = redirect_uri
+            flow.oauth2session.code_challenge_method = None
             flow.fetch_token(code=code)
             creds = flow.credentials
 
@@ -389,6 +394,7 @@ class GoogleCalendarOAuthStart(APIView):
             scopes=['https://www.googleapis.com/auth/calendar'],
         )
         flow.redirect_uri = redirect_uri
+        flow.oauth2session.code_challenge_method = None
         auth_url, _ = flow.authorization_url(
             access_type='offline',
             state=_make_state(str(request.user.id)),
@@ -437,6 +443,7 @@ class GoogleCalendarOAuthCallback(APIView):
                 state=state,
             )
             flow.redirect_uri = redirect_uri
+            flow.oauth2session.code_challenge_method = None
             flow.fetch_token(code=code)
             creds = flow.credentials
 

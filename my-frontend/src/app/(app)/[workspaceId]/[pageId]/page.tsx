@@ -1086,6 +1086,7 @@ export default function PageEditorRoute() {
           pageId={pageId}
           workspaceId={workspaceId}
           pageContent={pageContent}
+          pageTitle={title || undefined}
           onClose={() => toggleAiPanel()}
           selectedText={selectedText}
           onMindmapAction={(nodes) => {
