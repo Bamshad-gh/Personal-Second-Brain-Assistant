@@ -17,7 +17,7 @@ from email.mime.multipart import MIMEMultipart
 
 from django.conf import settings
 from django.core.mail import send_mail
-from werkzeug import Request
+from google.auth.transport.requests import Request
 
 from .crypto import decrypt_token
 from .models import EmailIntegration
