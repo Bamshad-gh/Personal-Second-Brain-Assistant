@@ -184,7 +184,9 @@ class GmailOAuthStartView(APIView):
             include_granted_scopes='true',
             state=_make_state(str(request.user.id)),
             prompt='consent',
-        )
+            code_challenge=None,
+            code_challenge_method=None,
+            )
         return Response({'url': auth_url})
 
 
@@ -399,6 +401,8 @@ class GoogleCalendarOAuthStart(APIView):
             access_type='offline',
             state=_make_state(str(request.user.id)),
             prompt='consent',
+            code_challenge=None,
+            code_challenge_method=None,
         )
         return Response({'url': auth_url})
 
